@@ -233,6 +233,8 @@ class PoseEngine {
       return pickAngle(a2, a3, options);
     };
 
+    const quality = this.getFrameQuality(landmarks, view);
+
     return {
       // 무릎 각도 (서있을 때 ~180도, 스쿼트 시 ~90도)
       leftKnee: angleFlexion(LANDMARKS.LEFT_HIP, LANDMARKS.LEFT_KNEE, LANDMARKS.LEFT_ANKLE),
@@ -258,8 +260,70 @@ class PoseEngine {
 
       // 디버깅/품질 확인용
       view,
-      angleSource: !canUseWorld ? 'IMAGE_2D' : (prefer2DForFlexion ? 'SMART_IMAGE_2D' : 'SMART_WORLD_3D')
+      angleSource: !canUseWorld ? 'IMAGE_2D' : (prefer2DForFlexion ? 'SMART_IMAGE_2D' : 'SMART_WORLD_3D'),
+      quality
     };
+  }
+
+  getFrameQuality(landmarks, view = 'UNKNOWN') {
+    const keyIndices = [
+      LANDMARKS.LEFT_SHOULDER,
+      LANDMARKS.RIGHT_SHOULDER,
+      LANDMARKS.LEFT_HIP,
+      LANDMARKS.RIGHT_HIP,
+      LANDMARKS.LEFT_KNEE,
+      LANDMARKS.RIGHT_KNEE,
+      LANDMARKS.LEFT_ANKLE,
+      LANDMARKS.RIGHT_ANKLE
+    ];
+
+    const visibilities = keyIndices
+      .map((idx) => landmarks?.[idx]?.visibility)
+      .filter((value) => Number.isFinite(value));
+
+    const avgVisibility = visibilities.length
+      ? visibilities.reduce((sum, value) => sum + value, 0) / visibilities.length
+      : 0;
+    const visibleRatio = keyIndices.length > 0
+      ? visibilities.filter((value) => value >= 0.6).length / keyIndices.length
+      : 0;
+    const viewStability = this.getViewStability(view);
+
+    const score = Math.max(0, Math.min(1,
+      avgVisibility * 0.65 +
+      visibleRatio * 0.2 +
+      viewStability * 0.15
+    ));
+
+    return {
+      score: Math.round(score * 100) / 100,
+      level: this.getQualityLevel(score),
+      factor: this.getQualityFactor(score),
+      avgVisibility: Math.round(avgVisibility * 100) / 100,
+      visibleRatio: Math.round(visibleRatio * 100) / 100,
+      viewStability: Math.round(viewStability * 100) / 100
+    };
+  }
+
+  getViewStability(view) {
+    if (view === 'UNKNOWN' || this.viewHistory.length === 0) {
+      return 0.4;
+    }
+
+    const matches = this.viewHistory.filter((item) => item === view).length;
+    return matches / this.viewHistory.length;
+  }
+
+  getQualityLevel(score) {
+    if (score >= 0.8) return 'HIGH';
+    if (score >= 0.6) return 'MEDIUM';
+    return 'LOW';
+  }
+
+  getQualityFactor(score) {
+    if (score >= 0.8) return 1;
+    if (score >= 0.6) return 0.85;
+    return 0.7;
   }
 
   /**
@@ -685,6 +749,9 @@ class PoseEngine {
    */
   drawLandmarks(ctx, landmarks, width, height) {
     landmarks.forEach((landmark, index) => {
+      // 얼굴 랜드마크는 운동 피드백에 사용하지 않으므로 캔버스에서 제외한다.
+      if (index < LANDMARKS.LEFT_SHOULDER) return;
+
       if (landmark.visibility > 0.5) {
         ctx.beginPath();
         ctx.arc(landmark.x * width, landmark.y * height, 5, 0, 2 * Math.PI);

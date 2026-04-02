@@ -23,6 +23,7 @@ class SessionBuffer {
     
     // 메트릭별 누적 데이터
     this.metricAccumulators = {};
+    this.repMetricAccumulators = {};
     
     // 이벤트 로그
     this.events = [];
@@ -89,6 +90,13 @@ class SessionBuffer {
       setNumber: this.currentSetNumber,
       relativeTime: Date.now() - this.startTime
     });
+
+    if (Array.isArray(repRecord.breakdown)) {
+      for (const item of repRecord.breakdown) {
+        this.accumulateMetric(this.repMetricAccumulators, item);
+      }
+    }
+
     this.currentSetReps++;
     
     console.log(`[SessionBuffer] 횟수 기록: ${repRecord.repNumber}회`);
@@ -139,6 +147,7 @@ class SessionBuffer {
         startTime: this.startTime,
         scoreTimeline: this.scoreTimeline,
         repRecords: this.repRecords,
+        repMetricAccumulators: this.repMetricAccumulators,
         setRecords: this.setRecords,
         events: this.events,
         savedAt: Date.now()
@@ -160,6 +169,7 @@ class SessionBuffer {
         const parsed = JSON.parse(data);
         this.scoreTimeline = parsed.scoreTimeline || [];
         this.repRecords = parsed.repRecords || [];
+        this.repMetricAccumulators = parsed.repMetricAccumulators || {};
         this.setRecords = parsed.setRecords || [];
         this.events = parsed.events || [];
         console.log('[SessionBuffer] 데이터 복구됨');
@@ -218,8 +228,11 @@ class SessionBuffer {
    */
   generateMetricResults() {
     const results = [];
+    const source = Object.keys(this.repMetricAccumulators).length > 0
+      ? this.repMetricAccumulators
+      : this.metricAccumulators;
     
-    for (const [key, data] of Object.entries(this.metricAccumulators)) {
+    for (const [key, data] of Object.entries(source)) {
       if (data.scores.length > 0) {
         const avgScore = Math.round(
           data.scores.reduce((a, b) => a + b, 0) / data.scores.length
@@ -242,6 +255,30 @@ class SessionBuffer {
     }
     
     return results;
+  }
+
+  accumulateMetric(target, item) {
+    const key = item?.key;
+    if (!key) return;
+
+    if (!target[key]) {
+      target[key] = {
+        metric_id: item.metric_id,
+        scores: [],
+        rawValues: [],
+        feedbackCount: 0
+      };
+    }
+
+    if (Number.isFinite(item.score)) {
+      target[key].scores.push(item.score);
+    }
+    if (Number.isFinite(item.rawValue)) {
+      target[key].rawValues.push(item.rawValue);
+    }
+    if (item.feedback) {
+      target[key].feedbackCount++;
+    }
   }
 
   /**

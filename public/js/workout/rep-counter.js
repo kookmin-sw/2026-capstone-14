@@ -10,12 +10,26 @@ const REP_STATES = {
   ACTIVE: 'ACTIVE'        // 활성 상태 (스쿼트, 푸시업 다운 등)
 };
 
+const REP_PHASES = {
+  NEUTRAL: 'NEUTRAL',
+  DESCENT: 'DESCENT',
+  BOTTOM: 'BOTTOM',
+  ASCENT: 'ASCENT',
+  LOCKOUT: 'LOCKOUT'
+};
+
+const SCORING_PHASES = [REP_PHASES.DESCENT, REP_PHASES.BOTTOM, REP_PHASES.ASCENT];
+
 class RepCounter {
   /**
    * @param {string} exerciseCode - 운동 코드 (squat, pushup, lunge 등)
    */
   constructor(exerciseCode) {
-    this.exerciseCode = (exerciseCode || '').toString();
+    this.exerciseCode = (exerciseCode || '')
+      .toString()
+      .trim()
+      .toLowerCase()
+      .replace(/-/g, '_');
     this.pattern = this.getExercisePattern(this.exerciseCode);
 
     // 상태
@@ -35,10 +49,21 @@ class RepCounter {
     this.activeTimeMs = 0;
     this.currentRepScores = [];     // ACTIVE 구간 점수
     this.currentRepAllScores = [];  // TRANSITION+ACTIVE 점수 (fallback)
+    this.currentMovementScores = []; // 스쿼트 품질 점수용 phase 구간 점수
     this.lastCompletedRepScore = 0;
+
+    // rep phase/요약 추적 (스쿼트 우선)
+    this.currentPhase = REP_PHASES.NEUTRAL;
+    this.currentRepSummary = null;
+    this.repLastFrameTime = null;
+    this.previousPrimaryAngle = null;
+    this.bottomStableFrames = 0;
+    this.bottomReached = false;
+    this.ascentStarted = false;
 
     // 콜백
     this.onRepComplete = null;
+    this.repEvaluator = null;
 
     console.log('[RepCounter] 초기화:', exerciseCode);
   }
@@ -202,6 +227,8 @@ class RepCounter {
       this.activeTimeMs = 0;
       this.currentRepScores = [];
       this.currentRepAllScores = [];
+      this.currentMovementScores = [];
+      this.startRepTracking(now);
     }
 
     // ACTIVE 체류 시간 누적
@@ -223,8 +250,14 @@ class RepCounter {
       }
     }
 
+    if (this.repStartTime != null) {
+      this.updateRepTracking(angles, now, primaryAngle, currentScore);
+    }
+
     // 횟수 완료 체크
     const repCompleted = this.checkRepCompletion(now);
+
+    this.previousPrimaryAngle = primaryAngle;
 
     if (repCompleted) {
       return this.completeRep(now);
@@ -279,7 +312,9 @@ class RepCounter {
       this.repStartTime = null;
       this.currentRepScores = [];
       this.currentRepAllScores = [];
+      this.currentMovementScores = [];
       this.activeTimeMs = 0;
+      this.resetRepTracking();
       return false;
     }
 
@@ -303,16 +338,38 @@ class RepCounter {
     this.lastRepTime = now;
 
     // 이번 동작의 점수 계산: ACTIVE 구간 점수 우선, 없으면 전체 구간 fallback
-    const scoreSamples = this.currentRepScores.length > 0 ? this.currentRepScores : this.currentRepAllScores;
+    const scoreSamples = this.isSquatExercise()
+      ? (this.currentMovementScores.length > 0 ? this.currentMovementScores : this.currentRepScores)
+      : (this.currentRepScores.length > 0 ? this.currentRepScores : this.currentRepAllScores);
     const repScore = this.aggregateScores(scoreSamples);
     this.lastCompletedRepScore = repScore;
 
-    const repRecord = {
+    let repRecord = {
       repNumber: this.repCount,
       score: repScore,
       duration: Math.round(duration),
       timestamp: Date.now()
     };
+
+    const repSummary = this.finalizeRepSummary();
+    if (repSummary) {
+      repRecord.summary = repSummary;
+      repRecord.phase = repSummary.finalPhase || this.currentPhase;
+      repRecord.view = repSummary.dominantView;
+      repRecord.confidence = repSummary.confidence;
+    }
+
+    if (typeof this.repEvaluator === 'function') {
+      const evaluated = this.repEvaluator(repRecord);
+      if (evaluated && typeof evaluated === 'object') {
+        repRecord = {
+          ...repRecord,
+          ...evaluated
+        };
+      }
+    }
+
+    this.lastCompletedRepScore = repRecord.score || repScore;
 
     this.repRecords.push(repRecord);
 
@@ -324,13 +381,15 @@ class RepCounter {
     this.activeTimeMs = 0;
     this.currentRepScores = [];
     this.currentRepAllScores = [];
+    this.currentMovementScores = [];
+    this.resetRepTracking();
 
     // 콜백 호출
     if (this.onRepComplete) {
       this.onRepComplete(repRecord);
     }
 
-    console.log(`[RepCounter] 횟수 완료: ${this.repCount}회, 점수: ${repScore}`);
+    console.log(`[RepCounter] 횟수 완료: ${this.repCount}회, 점수: ${repRecord.score}`);
 
     return repRecord;
   }
@@ -350,7 +409,9 @@ class RepCounter {
     if (this.pattern.isTimeBased) return 0;
     if (!this.isInProgress()) return this.lastCompletedRepScore || 0;
 
-    const scoreSamples = this.currentRepScores.length > 0 ? this.currentRepScores : this.currentRepAllScores;
+    const scoreSamples = this.isSquatExercise()
+      ? (this.currentMovementScores.length > 0 ? this.currentMovementScores : this.currentRepScores)
+      : (this.currentRepScores.length > 0 ? this.currentRepScores : this.currentRepAllScores);
     return this.aggregateScores(scoreSamples);
   }
 
@@ -369,6 +430,339 @@ class RepCounter {
     const trimmed = sorted.length >= 10 ? sorted.slice(trimCount, sorted.length - trimCount) : sorted;
     const sum = trimmed.reduce((a, b) => a + b, 0);
     return Math.round(sum / trimmed.length);
+  }
+
+  isSquatExercise() {
+    return this.exerciseCode === 'squat';
+  }
+
+  isScoringPhase(phase) {
+    return SCORING_PHASES.includes(phase);
+  }
+
+  startRepTracking(now) {
+    this.currentPhase = REP_PHASES.NEUTRAL;
+    this.currentRepSummary = this.isSquatExercise() ? this.createSquatRepSummary(now) : null;
+    this.repLastFrameTime = now;
+    this.bottomStableFrames = 0;
+    this.bottomReached = false;
+    this.ascentStarted = false;
+  }
+
+  resetRepTracking() {
+    this.currentPhase = REP_PHASES.NEUTRAL;
+    this.currentRepSummary = null;
+    this.repLastFrameTime = null;
+    this.bottomStableFrames = 0;
+    this.bottomReached = false;
+    this.ascentStarted = false;
+  }
+
+  updateRepTracking(angles, now, primaryAngle, currentScore) {
+    if (!this.isSquatExercise()) {
+      this.currentPhase = this.currentState === REP_STATES.ACTIVE ? REP_PHASES.BOTTOM : REP_PHASES.NEUTRAL;
+      return;
+    }
+
+    if (!this.currentRepSummary) {
+      this.startRepTracking(now);
+    }
+
+    const phase = this.detectSquatPhase(angles, primaryAngle);
+    const deltaMs = this.repLastFrameTime != null
+      ? Math.max(0, Math.min(now - this.repLastFrameTime, 120))
+      : 0;
+
+    this.repLastFrameTime = now;
+    this.currentPhase = phase;
+
+    const snapshot = this.getSquatSnapshot(angles, primaryAngle);
+    this.recordSquatFrame(phase, deltaMs, snapshot);
+
+    if (this.isScoringPhase(phase) && Number.isFinite(currentScore)) {
+      this.currentMovementScores.push(currentScore);
+    }
+  }
+
+  detectSquatPhase(angles, primaryAngle) {
+    const hipAngle = this.getAngleValue(angles, 'hip_angle');
+    const delta = this.previousPrimaryAngle == null ? 0 : (primaryAngle - this.previousPrimaryAngle);
+    const nearBottom = primaryAngle <= ((this.pattern.thresholds.active || 100) + 8);
+    const nearLockout = primaryAngle >= ((this.pattern.thresholds.neutral || 160) - 10) &&
+      (hipAngle == null || hipAngle >= 145);
+    const movingDown = delta <= -1.5;
+    const movingUp = delta >= 1.5;
+
+    if (this.currentState === REP_STATES.NEUTRAL) {
+      return (this.bottomReached || this.ascentStarted) ? REP_PHASES.LOCKOUT : REP_PHASES.NEUTRAL;
+    }
+
+    if (!this.bottomReached) {
+      if (nearBottom) {
+        this.bottomStableFrames = Math.abs(delta) <= 2 ? this.bottomStableFrames + 1 : 1;
+        if (this.bottomStableFrames >= 2 || (!movingDown && this.currentState === REP_STATES.ACTIVE)) {
+          this.bottomReached = true;
+          return REP_PHASES.BOTTOM;
+        }
+      } else {
+        this.bottomStableFrames = 0;
+      }
+
+      return REP_PHASES.DESCENT;
+    }
+
+    if (!this.ascentStarted) {
+      if (movingUp || this.currentState !== REP_STATES.ACTIVE) {
+        this.ascentStarted = true;
+        return nearLockout ? REP_PHASES.LOCKOUT : REP_PHASES.ASCENT;
+      }
+
+      return REP_PHASES.BOTTOM;
+    }
+
+    if (nearLockout && this.currentState === REP_STATES.NEUTRAL) {
+      return REP_PHASES.LOCKOUT;
+    }
+
+    return REP_PHASES.ASCENT;
+  }
+
+  createSquatRepSummary(startedAt) {
+    return {
+      exerciseCode: 'squat',
+      startedAt,
+      durationMs: 0,
+      finalPhase: REP_PHASES.NEUTRAL,
+      flags: {
+        bottomReached: false,
+        ascentStarted: false,
+        lockoutReached: false
+      },
+      views: {
+        FRONT: 0,
+        SIDE: 0,
+        UNKNOWN: 0
+      },
+      quality: {
+        scoreSum: 0,
+        count: 0,
+        levels: {
+          HIGH: 0,
+          MEDIUM: 0,
+          LOW: 0,
+          UNKNOWN: 0
+        }
+      },
+      overall: this.createSquatPhaseSummary(),
+      phases: {
+        DESCENT: this.createSquatPhaseSummary(),
+        BOTTOM: this.createSquatPhaseSummary(),
+        ASCENT: this.createSquatPhaseSummary(),
+        LOCKOUT: this.createSquatPhaseSummary()
+      }
+    };
+  }
+
+  createSquatPhaseSummary() {
+    return {
+      samples: 0,
+      durationMs: 0,
+      views: {
+        FRONT: 0,
+        SIDE: 0,
+        UNKNOWN: 0
+      },
+      qualityLevels: {
+        HIGH: 0,
+        MEDIUM: 0,
+        LOW: 0,
+        UNKNOWN: 0
+      },
+      metrics: {
+        kneeAngle: this.createMetricStats(),
+        hipAngle: this.createMetricStats(),
+        spineAngle: this.createMetricStats(),
+        kneeSymmetry: this.createMetricStats(),
+        kneeAlignment: this.createMetricStats(),
+        qualityScore: this.createMetricStats()
+      }
+    };
+  }
+
+  createMetricStats() {
+    return {
+      min: null,
+      max: null,
+      sum: 0,
+      count: 0
+    };
+  }
+
+  updateMetricStats(stats, value) {
+    if (!stats || !Number.isFinite(value)) return;
+    stats.min = stats.min == null ? value : Math.min(stats.min, value);
+    stats.max = stats.max == null ? value : Math.max(stats.max, value);
+    stats.sum += value;
+    stats.count++;
+  }
+
+  getSquatSnapshot(angles, primaryAngle) {
+    const leftKnee = Number.isFinite(angles.leftKnee) ? angles.leftKnee : null;
+    const rightKnee = Number.isFinite(angles.rightKnee) ? angles.rightKnee : null;
+    const kneeSymmetry = leftKnee != null && rightKnee != null ? Math.abs(leftKnee - rightKnee) : null;
+    const kneeAlignment = angles.kneeAlignment
+      ? (Math.abs(angles.kneeAlignment.left || 0) + Math.abs(angles.kneeAlignment.right || 0)) / 2
+      : null;
+    const qualityScore = Number.isFinite(angles.quality?.score) ? angles.quality.score : null;
+
+    return {
+      kneeAngle: primaryAngle,
+      hipAngle: this.getAngleValue(angles, 'hip_angle'),
+      spineAngle: this.getAngleValue(angles, 'spine_angle'),
+      kneeSymmetry,
+      kneeAlignment,
+      qualityScore,
+      view: angles.view || 'UNKNOWN',
+      qualityLevel: angles.quality?.level || 'UNKNOWN'
+    };
+  }
+
+  incrementBucketValue(bucket, key) {
+    const normalized = Object.prototype.hasOwnProperty.call(bucket, key) ? key : 'UNKNOWN';
+    bucket[normalized]++;
+  }
+
+  recordSquatFrame(phase, deltaMs, snapshot) {
+    if (!this.currentRepSummary) return;
+
+    const summary = this.currentRepSummary;
+    const phaseSummary = summary.phases[phase];
+
+    summary.durationMs += deltaMs;
+    summary.finalPhase = phase;
+    summary.flags.bottomReached = this.bottomReached;
+    summary.flags.ascentStarted = this.ascentStarted;
+    summary.flags.lockoutReached = summary.flags.lockoutReached || phase === REP_PHASES.LOCKOUT;
+
+    this.incrementBucketValue(summary.views, snapshot.view);
+    this.incrementBucketValue(summary.quality.levels, snapshot.qualityLevel);
+    if (Number.isFinite(snapshot.qualityScore)) {
+      summary.quality.scoreSum += snapshot.qualityScore;
+      summary.quality.count++;
+    }
+
+    this.recordSquatPhaseFrame(summary.overall, deltaMs, snapshot);
+    if (phaseSummary) {
+      this.recordSquatPhaseFrame(phaseSummary, deltaMs, snapshot);
+    }
+  }
+
+  recordSquatPhaseFrame(target, deltaMs, snapshot) {
+    target.samples++;
+    target.durationMs += deltaMs;
+    this.incrementBucketValue(target.views, snapshot.view);
+    this.incrementBucketValue(target.qualityLevels, snapshot.qualityLevel);
+
+    this.updateMetricStats(target.metrics.kneeAngle, snapshot.kneeAngle);
+    this.updateMetricStats(target.metrics.hipAngle, snapshot.hipAngle);
+    this.updateMetricStats(target.metrics.spineAngle, snapshot.spineAngle);
+    this.updateMetricStats(target.metrics.kneeSymmetry, snapshot.kneeSymmetry);
+    this.updateMetricStats(target.metrics.kneeAlignment, snapshot.kneeAlignment);
+    this.updateMetricStats(target.metrics.qualityScore, snapshot.qualityScore);
+  }
+
+  finalizeRepSummary() {
+    if (!this.currentRepSummary) return null;
+    if (!this.isSquatExercise()) return null;
+
+    const summary = this.currentRepSummary;
+    const confidenceScore = this.getScoringPhaseConfidence(summary);
+
+    return {
+      exerciseCode: summary.exerciseCode,
+      durationMs: Math.round(summary.durationMs),
+      finalPhase: summary.finalPhase,
+      flags: summary.flags,
+      dominantView: this.getDominantBucketKey(summary.views),
+      views: summary.views,
+      confidence: {
+        score: Math.round(confidenceScore * 100) / 100,
+        level: this.getConfidenceLevel(confidenceScore),
+        factor: this.getConfidenceFactor(confidenceScore),
+        levels: summary.quality.levels
+      },
+      overall: this.finalizeSquatPhaseSummary(summary.overall),
+      phases: Object.fromEntries(
+        Object.entries(summary.phases).map(([phase, phaseSummary]) => [phase, this.finalizeSquatPhaseSummary(phaseSummary)])
+      )
+    };
+  }
+
+  getScoringPhaseConfidence(summary) {
+    let weightedSum = 0;
+    let totalCount = 0;
+
+    for (const phase of SCORING_PHASES) {
+      const qualityStats = summary?.phases?.[phase]?.metrics?.qualityScore;
+      if (!qualityStats || !Number.isFinite(qualityStats.sum) || !Number.isFinite(qualityStats.count) || qualityStats.count <= 0) {
+        continue;
+      }
+
+      weightedSum += qualityStats.sum;
+      totalCount += qualityStats.count;
+    }
+
+    if (totalCount > 0) {
+      return weightedSum / totalCount;
+    }
+
+    return summary.quality.count > 0 ? summary.quality.scoreSum / summary.quality.count : 0;
+  }
+
+  finalizeSquatPhaseSummary(summary) {
+    return {
+      samples: summary.samples,
+      durationMs: Math.round(summary.durationMs),
+      views: summary.views,
+      qualityLevels: summary.qualityLevels,
+      metrics: Object.fromEntries(
+        Object.entries(summary.metrics).map(([key, stats]) => [key, this.finalizeMetricStats(stats)])
+      )
+    };
+  }
+
+  finalizeMetricStats(stats) {
+    if (!stats || stats.count === 0) {
+      return {
+        min: null,
+        max: null,
+        avg: null,
+        count: 0
+      };
+    }
+
+    return {
+      min: Math.round(stats.min * 10) / 10,
+      max: Math.round(stats.max * 10) / 10,
+      avg: Math.round((stats.sum / stats.count) * 10) / 10,
+      count: stats.count
+    };
+  }
+
+  getDominantBucketKey(bucket) {
+    return Object.entries(bucket).reduce((best, entry) => entry[1] > best[1] ? entry : best, ['UNKNOWN', -1])[0];
+  }
+
+  getConfidenceLevel(score) {
+    if (score >= 0.8) return 'HIGH';
+    if (score >= 0.6) return 'MEDIUM';
+    return 'LOW';
+  }
+
+  getConfidenceFactor(score) {
+    if (score >= 0.8) return 1;
+    if (score >= 0.6) return 0.85;
+    return 0.7;
   }
 
   /**
@@ -445,10 +839,14 @@ class RepCounter {
     this.activeTimeMs = 0;
     this.currentRepScores = [];
     this.currentRepAllScores = [];
+    this.currentMovementScores = [];
     this.lastCompletedRepScore = 0;
+    this.previousPrimaryAngle = null;
+    this.resetRepTracking();
   }
 }
 
 // 전역 접근 가능하도록 export
 window.RepCounter = RepCounter;
 window.REP_STATES = REP_STATES;
+window.REP_PHASES = REP_PHASES;
