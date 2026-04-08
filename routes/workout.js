@@ -15,6 +15,7 @@ const {
     getRoutineWorkoutSession,
     startWorkoutSession,
     endWorkoutSession,
+    abortWorkoutSession,
     recordWorkoutSet,
     recordSessionEvent,
     getWorkoutResult,
@@ -58,6 +59,7 @@ router.get('/workout/result/:sessionId', requireAuth, getWorkoutResult);
 router.get('/api/exercises', getExercises);
 router.post('/api/workout/session', requireAuth, startWorkoutSession);
 router.put('/api/workout/session/:sessionId/end', requireAuth, endWorkoutSession);
+router.post('/api/workout/session/:sessionId/abort', requireAuth, abortWorkoutSession);
 router.post('/api/workout/session/:sessionId/set', requireAuth, recordWorkoutSet);
 router.post('/api/workout/session/:sessionId/event', requireAuth, recordSessionEvent);
 

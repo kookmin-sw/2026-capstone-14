@@ -217,16 +217,37 @@
     const startBtn = document.getElementById('startBtn');
     const pauseBtn = document.getElementById('pauseBtn');
     const finishBtn = document.getElementById('finishBtn');
+    let isEndingSession = false;
+    let pendingSessionPayload = null;
+    let hasUnloadAbortSent = false;
     const cameraReadyHtml = '<p>준비 완료</p><p class="muted">전신이 잘 보이도록 위치를 조정하세요</p>';
-    const currentExerciseCode = ((workoutData.exercise && workoutData.exercise.code) || '')
-      .toString()
-      .trim()
-      .toLowerCase()
-      .replace(/-/g, '_');
+    function getCurrentExerciseCode() {
+      return ((workoutData.exercise && workoutData.exercise.code) || '')
+        .toString()
+        .trim()
+        .toLowerCase()
+        .replace(/-/g, '_');
+    }
+
+    function bindEnginesToCurrentExercise() {
+      if (!workoutData.exercise || !workoutData.scoringProfile) {
+        return false;
+      }
+
+      scoringEngine = new ScoringEngine(workoutData.scoringProfile, {
+        exerciseCode: workoutData.exercise.code
+      });
+      exerciseModule = window.WorkoutExerciseRegistry?.get(workoutData.exercise.code) || null;
+
+      repCounter = new RepCounter(workoutData.exercise.code);
+      repCounter.repEvaluator = (repRecord) => scoringEngine.scoreRep(repRecord);
+      repCounter.onRepComplete = handleRepComplete;
+      return true;
+    }
 
     function getExerciseRuntime(extra = {}) {
       return {
-        exerciseCode: currentExerciseCode,
+        exerciseCode: getCurrentExerciseCode(),
         exerciseModule,
         repCounter,
         scoringEngine,
@@ -253,15 +274,12 @@
         await poseEngine.initialize();
 
         // 2. ScoringEngine 초기화
-        scoringEngine = new ScoringEngine(workoutData.scoringProfile, {
-          exerciseCode: workoutData.exercise.code
-        });
-        exerciseModule = window.WorkoutExerciseRegistry?.get(workoutData.exercise.code) || null;
+        if (!bindEnginesToCurrentExercise()) {
+          throw new Error('운동 또는 채점 프로필 정보가 없습니다.');
+        }
 
         // 3. RepCounter 초기화
-        repCounter = new RepCounter(workoutData.exercise.code);
-        repCounter.repEvaluator = (repRecord) => scoringEngine.scoreRep(repRecord);
-        repCounter.onRepComplete = handleRepComplete;
+        // repCounter/scoringEngine are bound in bindEnginesToCurrentExercise()
 
         // 4. PoseEngine 콜백 설정
         poseEngine.onPoseDetected = handlePoseDetected;
@@ -350,14 +368,21 @@ cameraOverlay.innerHTML = cameraReadyHtml;
             exercise_id: workoutData.exercise.exercise_id,
             scoring_profile_id: workoutData.scoringProfile?.scoring_profile_id,
             mode: workoutData.mode,
-            routine_instance_id: workoutData.routineInstance?.routine_instance_id
+            routine_id: workoutData.routine?.routine_id || null
           })
         });
 
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.error || data.message || '세션 시작에 실패했습니다.');
+        }
 
         state.sessionId = data.session.session_id;
+        hasUnloadAbortSent = false;
+        pendingSessionPayload = null;
+        if (data.routineInstance) {
+          workoutData.routineInstance = data.routineInstance;
+        }
         state.phase = 'WORKING';
 
         // SessionBuffer 초기화
@@ -369,6 +394,7 @@ cameraOverlay.innerHTML = cameraReadyHtml;
         startBtn.hidden = true;
         pauseBtn.disabled = false;
         finishBtn.disabled = false;
+        finishBtn.textContent = '?대룞 醫낅즺';
 
         // 타이머 시작
         startTimer();
@@ -771,6 +797,50 @@ cameraOverlay.innerHTML = cameraReadyHtml;
       setTimeout(() => toast.remove(), 2000);
     }
 
+    function resetStepUiState() {
+      state.currentSet = 1;
+      state.currentRep = 0;
+      state.repMetricBuffer = {};
+      state.lastRepMetricSummary = [];
+      state.repInProgressPrev = false;
+      setCountEl.textContent = 1;
+      repCountEl.textContent = 0;
+      liveScoreEl.textContent = '--';
+      scoreBreakdownEl.innerHTML = '<div class="score-item"><span class="muted">rep 시작하면 표시됩니다.</span></div>';
+      if (repCounter) {
+        repCounter.reset();
+      }
+    }
+
+    function switchRoutineStep(stepIndex) {
+      const step = workoutData.routine?.routine_setup?.[stepIndex];
+      const nextExercise = step?.exercise;
+      const nextScoringProfile = step?.scoring_profile;
+
+      if (!nextExercise || !nextScoringProfile) {
+        return false;
+      }
+
+      workoutData.exercise = nextExercise;
+      workoutData.scoringProfile = nextScoringProfile;
+
+      if (!bindEnginesToCurrentExercise()) {
+        return false;
+      }
+
+      resetStepUiState();
+
+      if (sessionBuffer) {
+        sessionBuffer.addEvent('ROUTINE_STEP_CHANGE', {
+          stepIndex,
+          exercise_id: nextExercise.exercise_id,
+          exercise_code: nextExercise.code
+        });
+      }
+
+      return true;
+    }
+
     // 루틴 진행도 체크
     function checkRoutineProgress() {
       const currentStep = workoutData.routine.routine_setup[state.currentStepIndex];
@@ -778,12 +848,13 @@ cameraOverlay.innerHTML = cameraReadyHtml;
 
       // 목표 횟수 달성
       if (currentStep.target_type === 'REPS' && state.currentRep >= currentStep.target_value) {
+        if (sessionBuffer) {
+          sessionBuffer.completeSet(currentStep.rest_sec || 0);
+        }
+
         if (state.currentSet < currentStep.sets) {
           // 세트 완료, 휴식 시작
-          if (sessionBuffer) {
-            sessionBuffer.completeSet(currentStep.rest_sec);
-          }
-          startRest(currentStep.rest_sec);
+          startRest(currentStep.rest_sec || 0);
         } else {
           // 다음 운동으로
           nextExercise();
@@ -907,6 +978,13 @@ cameraOverlay.innerHTML = cameraReadyHtml;
         return;
       }
 
+      const switched = switchRoutineStep(state.currentStepIndex);
+      if (!switched) {
+        showAlert('루틴 오류', '다음 운동의 채점 설정을 불러오지 못했습니다.');
+        finishWorkout();
+        return;
+      }
+
       // 진행률 업데이트
       const progress = (state.currentStepIndex / routineSteps.length) * 100;
       document.getElementById('routineProgress').style.width = `${progress}%`;
@@ -921,14 +999,15 @@ cameraOverlay.innerHTML = cameraReadyHtml;
 
       if (repCounter) repCounter.reset();
       if (sessionBuffer) sessionBuffer.addEvent('NEXT_EXERCISE', {
-        stepIndex: state.currentStepIndex
+        stepIndex: state.currentStepIndex,
+        exercise_code: workoutData.exercise?.code || null
       });
 
       showAlert('다음 운동', routineSteps[state.currentStepIndex].exercise?.name || '다음 운동');
     }
 
     // 운동 종료
-    async function finishWorkout() {
+    async function finishWorkoutLegacy() {
       state.phase = 'FINISHED';
 
       // 리소스 정리
@@ -974,6 +1053,61 @@ cameraOverlay.innerHTML = cameraReadyHtml;
     }
 
     // 요약 생성 (fallback)
+    // 저장 안정성을 높인 종료 함수(동일 이름으로 재정의)
+    async function finishWorkout() {
+      if (!state.sessionId || isEndingSession) return;
+      isEndingSession = true;
+      finishBtn.disabled = true;
+      finishBtn.textContent = '저장 중...';
+      pauseBtn.disabled = true;
+
+      state.phase = 'FINISHED';
+      clearInterval(state.timerInterval);
+      clearInterval(state.restInterval);
+      if (state.frameLoop) {
+        cancelAnimationFrame(state.frameLoop);
+      }
+      if (poseEngine) {
+        poseEngine.destroy();
+      }
+
+      updateStatus('finished', '?꾨즺');
+
+      try {
+        const sessionData = pendingSessionPayload || (sessionBuffer ? sessionBuffer.export() : {
+          duration_sec: state.totalTime,
+          total_reps: state.currentRep,
+          final_score: state.liveScore || 0,
+          summary_feedback: generateSummary()
+        });
+        pendingSessionPayload = sessionData;
+
+        const response = await fetch(`/api/workout/session/${state.sessionId}/end`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(sessionData)
+        });
+
+        const responseBody = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(responseBody.error || responseBody.message || '?몄뀡 醫낅즺 ?ㅽ뙣');
+        }
+
+        if (sessionBuffer) {
+          sessionBuffer.clearStorage();
+        }
+        pendingSessionPayload = null;
+        window.location.href = `/workout/result/${state.sessionId}`;
+      } catch (error) {
+        console.error('[Session] 醫낅즺 ?먮윭:', error);
+        showAlert('저장 실패', '운동 결과 저장에 실패했습니다. 종료 버튼을 다시 눌러 재시도해 주세요.');
+        finishBtn.disabled = false;
+        finishBtn.textContent = '저장 재시도';
+      } finally {
+        isEndingSession = false;
+      }
+    }
+
     function generateSummary() {
       if (state.liveScore >= 80) {
         return '훌륭해요! 자세가 매우 좋습니다.';
@@ -1002,12 +1136,38 @@ cameraOverlay.innerHTML = cameraReadyHtml;
     }
 
     // 페이지 언로드 시 정리
-    window.addEventListener('beforeunload', (e) => {
+    function sendAbortBeacon(reason = 'UNLOAD') {
+      if (!state.sessionId || hasUnloadAbortSent || state.phase === 'FINISHED') {
+        return;
+      }
+
+      hasUnloadAbortSent = true;
+      const payload = JSON.stringify({
+        reason,
+        duration_sec: state.totalTime || 0,
+        total_reps: state.currentRep || 0
+      });
+      const url = `/api/workout/session/${state.sessionId}/abort`;
+
+      if (navigator.sendBeacon) {
+        const blob = new Blob([payload], { type: 'application/json' });
+        navigator.sendBeacon(url, blob);
+        return;
+      }
+
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        keepalive: true
+      }).catch(() => {});
+    }
+
+    window.addEventListener('beforeunload', () => {
       if (state.phase === 'WORKING' || state.phase === 'RESTING' || state.phase === 'PAUSED') {
         // 데이터 백업
         if (sessionBuffer) sessionBuffer.saveToStorage();
-        e.preventDefault();
-        e.returnValue = '';
+        sendAbortBeacon('UNLOAD');
       }
     });
 
