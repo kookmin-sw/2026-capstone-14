@@ -131,6 +131,8 @@ async function initSession(workoutData) {
 
   async function connectCameraSource(sourceType) {
     cameraOverlay.innerHTML = '<p>카메라를 연결 중...</p>';
+    cameraOverlay.hidden = false;
+    startBtn.disabled = true;
 
     if (!aiEnginesInitialized) {
       const aiReady = await initAIEngines();
@@ -146,8 +148,20 @@ async function initSession(workoutData) {
       startBtn.disabled = false;
     } catch (error) {
       console.error('[Session] 카메라 에러:', error);
+
+      let userMessage = '권한을 확인하거나 다른 입력 소스를 선택해 주세요';
+      if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+        userMessage = '카메라가 감지되지 않았습니다. 다른 입력 소스를 선택해 주세요';
+      } else if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+        userMessage = '카메라 권한이 거부되었습니다. 브라우저 설정에서 허용해 주세요';
+      } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+        userMessage = '카메라를 열 수 없습니다. 다른 프로그램이 카메라를 사용 중이거나 드라이버 문제일 수 있습니다';
+      } else if (error.name === 'AbortError') {
+        userMessage = '사용자가 취소했습니다. 입력 소스를 다시 선택해 주세요';
+      }
+
       cameraOverlay.innerHTML =
-        '<p>미디어 연결 실패</p><p class="muted">권한을 확인하거나 다른 입력 소스를 선택해 주세요</p>';
+        `<p>미디어 연결 실패</p><p class="muted">${userMessage}</p>`;
       startBtn.disabled = true;
     }
   }

@@ -17,44 +17,41 @@ class SessionCamera {
    * @returns {Promise<MediaStream>}
    */
   async getStream(sourceType) {
-    const videoConstraints = {
-      width: { ideal: 640 },
-      height: { ideal: 480 }
+    if (sourceType === 'screen') {
+      return navigator.mediaDevices.getDisplayMedia({
+        video: { width: 640, height: 480 }
+      });
+    }
+
+    const facingMode =
+      sourceType === 'mobile_rear' ? { ideal: 'environment' } : 'user';
+
+    // 1차: 해상도 + facingMode 로 시도
+    const preferred = {
+      video: {
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+        facingMode
+      }
     };
 
-    switch (sourceType) {
-      case 'screen':
-        return navigator.mediaDevices.getDisplayMedia({
-          video: { width: 640, height: 480 }
-        });
-
-      case 'webcam':
-        return navigator.mediaDevices.getUserMedia({
-          video: {
-            ...videoConstraints,
-            facingMode: 'user'
-          }
-        });
-
-      case 'mobile_rear':
-        return navigator.mediaDevices.getUserMedia({
-          video: {
-            ...videoConstraints,
-            facingMode: { ideal: 'environment' }
-          }
-        });
-
-      case 'mobile_front':
-        return navigator.mediaDevices.getUserMedia({
-          video: {
-            ...videoConstraints,
-            facingMode: 'user'
-          }
-        });
-
-      default:
-        throw new Error(`Unknown camera source: ${sourceType}`);
+    try {
+      return await navigator.mediaDevices.getUserMedia(preferred);
+    } catch (firstError) {
+      console.warn('[SessionCamera] 선호 제약 실패, fallback 시도:', firstError.name);
     }
+
+    // 2차: facingMode만 (해상도 제약 제거)
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        video: { facingMode }
+      });
+    } catch (secondError) {
+      console.warn('[SessionCamera] facingMode 제약 실패, 최소 제약 시도:', secondError.name);
+    }
+
+    // 3차: 제약 없이 아무 카메라나 잡기
+    return navigator.mediaDevices.getUserMedia({ video: true });
   }
 
   /**
@@ -78,14 +75,14 @@ class SessionCamera {
 
     video.onloadedmetadata = () => {
       syncCanvasSize();
+      video.play().catch(() => {});
     };
 
-    // 이미 메타데이터가 있는 경우(재연결 등)
     if (video.readyState >= 1) {
       syncCanvasSize();
+      video.play().catch(() => {});
     }
 
-    // 화면 공유: 사용자가 공유 중지 시 트랙 종료
     stream.getVideoTracks().forEach((track) => {
       track.onended = () => {
         if (this.currentStream === stream) {
@@ -108,4 +105,4 @@ class SessionCamera {
 }
 
 window.SessionCamera = SessionCamera;
-window.SESSION_CAMERA_DEFAULT_SOURCE = 'screen';
+window.SESSION_CAMERA_DEFAULT_SOURCE = 'webcam';
