@@ -261,6 +261,22 @@ const getSessionDetail = async (req, res, next) => {
             return res.status(404).json({ error: '세션을 찾을 수 없습니다.' });
         }
 
+        const { data: workoutSets, error: setError } = await supabase
+            .from('workout_set')
+            .select('set_no, phase, target_reps, actual_reps, duration_sec, started_at, ended_at')
+            .eq('session_id', sessionId)
+            .order('set_no', { ascending: true })
+            .order('started_at', { ascending: true });
+
+        if (setError) throw setError;
+
+        session.workout_sets = workoutSets || [];
+        session.session_metric_result = (session.session_metric_result || []).sort((a, b) => {
+            const aTitle = a.metric?.title || '';
+            const bTitle = b.metric?.title || '';
+            return aTitle.localeCompare(bTitle, 'ko');
+        });
+
         res.json(session);
     } catch (error) {
         next(error);
@@ -272,9 +288,13 @@ const getHistoryStats = async (req, res, next) => {
     try {
         const userId = req.user.user_id;
         const { days = 30 } = req.query;
+        const parsedDays = Number.parseInt(days, 10);
+        const safeDays = Number.isFinite(parsedDays)
+            ? Math.min(Math.max(parsedDays, 1), 180)
+            : 30;
 
         const startDate = new Date();
-        startDate.setDate(startDate.getDate() - parseInt(days));
+        startDate.setDate(startDate.getDate() - (safeDays - 1));
         startDate.setHours(0, 0, 0, 0);
 
         const { data: sessions, error } = await supabase
@@ -298,14 +318,18 @@ const getHistoryStats = async (req, res, next) => {
                     totalMinutes: 0,
                     totalReps: 0,
                     scores: [],
+                    bestScore: null,
                     exercises: {}
                 };
             }
             dailyStats[date].count++;
             dailyStats[date].totalMinutes += Math.round((session.duration_sec || 0) / 60);
             dailyStats[date].totalReps += session.total_reps || 0;
-            if (session.final_score) {
+            if (typeof session.final_score === 'number') {
                 dailyStats[date].scores.push(session.final_score);
+                dailyStats[date].bestScore = dailyStats[date].bestScore === null
+                    ? session.final_score
+                    : Math.max(dailyStats[date].bestScore, session.final_score);
             }
             
             const exerciseName = session.exercise?.name || '기타';
@@ -317,6 +341,7 @@ const getHistoryStats = async (req, res, next) => {
             day.avgScore = day.scores.length 
                 ? Math.round(day.scores.reduce((a, b) => a + b, 0) / day.scores.length)
                 : 0;
+            day.bestScore = day.bestScore ?? 0;
             delete day.scores;
         });
 
@@ -325,12 +350,22 @@ const getHistoryStats = async (req, res, next) => {
         (sessions || []).forEach(session => {
             const name = session.exercise?.name || '기타';
             if (!exerciseStats[name]) {
-                exerciseStats[name] = { name, count: 0, totalMinutes: 0, avgScore: 0, scores: [] };
+                exerciseStats[name] = {
+                    name,
+                    count: 0,
+                    totalMinutes: 0,
+                    totalReps: 0,
+                    avgScore: 0,
+                    bestScore: 0,
+                    scores: []
+                };
             }
             exerciseStats[name].count++;
             exerciseStats[name].totalMinutes += Math.round((session.duration_sec || 0) / 60);
-            if (session.final_score) {
+            exerciseStats[name].totalReps += session.total_reps || 0;
+            if (typeof session.final_score === 'number') {
                 exerciseStats[name].scores.push(session.final_score);
+                exerciseStats[name].bestScore = Math.max(exerciseStats[name].bestScore, session.final_score);
             }
         });
 
@@ -343,7 +378,11 @@ const getHistoryStats = async (req, res, next) => {
 
         res.json({
             daily: Object.values(dailyStats),
-            exercises: Object.values(exerciseStats).sort((a, b) => b.count - a.count)
+            exercises: Object.values(exerciseStats).sort((a, b) => {
+                if (b.count !== a.count) return b.count - a.count;
+                return b.avgScore - a.avgScore;
+            }),
+            requestedDays: safeDays
         });
     } catch (error) {
         next(error);
