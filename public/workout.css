@@ -151,6 +151,107 @@
   justify-content: center;
 }
 
+/* 세션: 입력 소스 선택 */
+.source-select {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+  background: rgba(30, 41, 59, 0.6);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.source-select-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.source-select-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.source-select .source-btn {
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 8px;
+}
+
+.source-select .source-btn.active {
+  background: rgba(91, 108, 255, 0.35);
+  border-color: rgba(123, 97, 255, 0.6);
+  color: #f1f5f9;
+}
+
+.source-select-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  margin: 0;
+}
+
+/* 세션: 포즈 캔버스 오버레이 (비디오 위) */
+#poseCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* 세션: 점수 상세 행 (인라인 스타일 이전) */
+.score-detail .score-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+@keyframes fadeInOut {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(20px);
+  }
+
+  15% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  85% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-20px);
+  }
+}
+
+.workout-session-toast {
+  position: fixed;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 12px 24px;
+  border-radius: 8px;
+  z-index: 1000;
+  animation: fadeInOut 2s ease;
+}
+
+.status.finished {
+  background: rgba(148, 163, 184, 0.2);
+  color: #cbd5e1;
+}
+
 /* 사이드바 */
 .workout-sidebar {
   display: flex;
