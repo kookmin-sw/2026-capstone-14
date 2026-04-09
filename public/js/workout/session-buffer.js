@@ -148,6 +148,7 @@ class SessionBuffer {
     };
 
     this.setRecords.push(setRecord);
+    this.addEvent('SET_RECORD');
 
     // 다음 세트 준비
     this.currentSetNumber++;

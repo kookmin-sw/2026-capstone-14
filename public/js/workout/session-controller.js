@@ -28,7 +28,9 @@ async function initSession(workoutData) {
     lastViewInfoText: '',
     repInProgressPrev: false,
     repMetricBuffer: {},
-    lastRepMetricSummary: []
+    lastRepMetricSummary: [],
+    currentSetWorkSec: 0,
+    restAfterAction: null
   };
 
   const videoElement = document.getElementById('videoElement');
@@ -40,6 +42,7 @@ async function initSession(workoutData) {
   const phaseInfoEl = document.getElementById('phaseInfo');
   const viewInfoEl = document.getElementById('viewInfo');
   const repCountEl = document.getElementById('repCount');
+  const repCountLabelEl = document.getElementById('repCountLabel');
   const setCountEl = document.getElementById('setCount');
   const timerValueEl = document.getElementById('timerValue');
   const timerLabelEl = document.getElementById('timerLabel');
@@ -52,6 +55,7 @@ async function initSession(workoutData) {
   const pauseBtn = document.getElementById('pauseBtn');
   const finishBtn = document.getElementById('finishBtn');
   const viewSelectRoot = document.getElementById('viewSelect');
+  const routineStepEl = document.getElementById('routineStep');
 
   const normalizeViewCode = (value) => {
     const normalized = (value || '').toString().trim().toUpperCase();
@@ -71,6 +75,55 @@ async function initSession(workoutData) {
     const defaultView = normalizeViewCode(exercise?.default_view);
     if (defaultView && allowed.includes(defaultView)) return defaultView;
     return allowed[0] || 'FRONT';
+  }
+
+  function normalizeRoutineTargetType(value) {
+    const normalized = (value || '').toString().trim().toUpperCase();
+    if (normalized === 'DURATION') return 'TIME';
+    return normalized === 'TIME' ? 'TIME' : 'REPS';
+  }
+
+  function getCurrentRoutineStep() {
+    return workoutData.routine?.routine_setup?.[state.currentStepIndex] || null;
+  }
+
+  function isRoutineTimeTarget() {
+    if (workoutData.mode !== 'ROUTINE' || !workoutData.routine) return false;
+    const step = getCurrentRoutineStep();
+    return normalizeRoutineTargetType(step?.target_type) === 'TIME';
+  }
+
+  function updatePrimaryCounterDisplay() {
+    if (repCountLabelEl) {
+      repCountLabelEl.textContent = isRoutineTimeTarget() ? '\uC2DC\uAC04(\uCD08)' : '\uD69F\uC218';
+    }
+
+    const value = isRoutineTimeTarget()
+      ? Math.max(0, Math.round(state.currentSetWorkSec))
+      : Math.max(0, Math.round(state.currentRep));
+    repCountEl.textContent = String(value);
+  }
+
+  function updateRoutineStepDisplay() {
+    if (!routineStepEl || workoutData.mode !== 'ROUTINE' || !workoutData.routine) return;
+
+    const steps = Array.isArray(workoutData.routine.routine_setup) ? workoutData.routine.routine_setup : [];
+    if (steps.length === 0) return;
+
+    const stepIndex = Math.min(state.currentStepIndex, steps.length - 1);
+    const step = steps[stepIndex] || {};
+    const targetType = normalizeRoutineTargetType(step.target_type);
+    const targetValue = Math.max(1, Number(step.target_value) || 1);
+    const unit = targetType === 'TIME' ? '\uCD08' : '\uD68C';
+    const sets = Math.max(1, Number(step.sets) || 1);
+
+    routineStepEl.textContent =
+      `${stepIndex + 1} / ${steps.length} \uC6B4\uB3D9 \u00B7 \uBAA9\uD45C ${targetValue}${unit} \u00D7 ${sets}\uC138\uD2B8`;
+  }
+
+  function refreshRoutineCounterUi() {
+    updatePrimaryCounterDisplay();
+    updateRoutineStepDisplay();
   }
 
   let isEndingSession = false;
@@ -282,6 +335,7 @@ async function initSession(workoutData) {
         workoutData.routineInstance = data.routineInstance;
       }
       state.phase = 'WORKING';
+      refreshRoutineCounterUi();
 
       sessionBuffer = new SessionBuffer(state.sessionId, {
         exerciseCode: workoutData.exercise.code,
@@ -516,7 +570,7 @@ async function initSession(workoutData) {
 
   function handleRepComplete(repRecord) {
     state.currentRep = repRecord.repNumber;
-    repCountEl.textContent = state.currentRep;
+    updatePrimaryCounterDisplay();
 
     state.lastRepMetricSummary =
       Array.isArray(repRecord.breakdown) && repRecord.breakdown.length > 0
@@ -660,11 +714,13 @@ async function initSession(workoutData) {
   function resetStepUiState() {
     state.currentSet = 1;
     state.currentRep = 0;
+    state.currentSetWorkSec = 0;
+    state.restAfterAction = null;
     state.repMetricBuffer = {};
     state.lastRepMetricSummary = [];
     state.repInProgressPrev = false;
     setCountEl.textContent = 1;
-    repCountEl.textContent = 0;
+    updatePrimaryCounterDisplay();
     liveScoreEl.textContent = '--';
     scoreBreakdownEl.innerHTML = '<div class="score-item"><span class="muted">rep 시작하면 표시됩니다.</span></div>';
     if (repCounter) {
@@ -699,23 +755,56 @@ async function initSession(workoutData) {
       });
     }
 
+    refreshRoutineCounterUi();
     return true;
   }
 
-  function checkRoutineProgress() {
+  function checkRoutineProgress(trigger = 'REP') {
+    if (state.phase !== 'WORKING') return;
     const currentStep = workoutData.routine.routine_setup[state.currentStepIndex];
     if (!currentStep) return;
 
-    if (currentStep.target_type === 'REPS' && state.currentRep >= currentStep.target_value) {
-      if (sessionBuffer) {
-        sessionBuffer.completeSet(currentStep.rest_sec || 0);
-      }
+    const targetType = normalizeRoutineTargetType(currentStep.target_type);
+    const targetValue = Math.max(1, Number(currentStep.target_value) || 1);
+    const actualValue = targetType === 'TIME' ? state.currentSetWorkSec : state.currentRep;
 
-      if (state.currentSet < currentStep.sets) {
-        startRest(currentStep.rest_sec || 0);
+    if (actualValue < targetValue) return;
+
+    const restSec = Math.max(0, Number(currentStep.rest_sec) || 0);
+
+    if (sessionBuffer) {
+      sessionBuffer.completeSet(restSec);
+      if (trigger) {
+        sessionBuffer.addEvent('ROUTINE_TARGET_REACHED');
+      }
+    }
+    state.currentSetWorkSec = 0;
+    updatePrimaryCounterDisplay();
+
+    const hasNextExerciseStep = state.currentStepIndex < workoutData.routine.routine_setup.length - 1;
+
+    if (state.currentSet < currentStep.sets) {
+      if (restSec > 0) {
+        startRest(restSec, 'NEXT_SET');
+      } else {
+        state.currentSet++;
+        setCountEl.textContent = state.currentSet;
+        state.currentRep = 0;
+        state.currentSetWorkSec = 0;
+        updatePrimaryCounterDisplay();
+        if (repCounter) {
+          repCounter.repCount = 0;
+        }
+        showAlert('?ㅼ쓬 ?명듃', `${state.currentSet}?명듃 ?쒖옉!`);
+      }
+    } else if (hasNextExerciseStep) {
+      if (restSec > 0) {
+        startRest(restSec, 'NEXT_EXERCISE');
       } else {
         nextExercise();
       }
+    } else {
+      nextExercise();
     }
   }
 
@@ -723,7 +812,16 @@ async function initSession(workoutData) {
     state.timerInterval = setInterval(() => {
       if (!state.isPaused && state.phase === 'WORKING') {
         state.totalTime++;
+        state.currentSetWorkSec++;
         updateTimerDisplay();
+
+        if (isRoutineTimeTarget()) {
+          updatePrimaryCounterDisplay();
+        }
+
+        if (workoutData.mode === 'ROUTINE' && workoutData.routine) {
+          checkRoutineProgress('TIMER');
+        }
       }
     }, 1000);
   }
@@ -757,9 +855,10 @@ async function initSession(workoutData) {
     }
   }
 
-  function startRest(seconds) {
+  function startRest(seconds, afterAction = 'NEXT_SET') {
     state.phase = 'RESTING';
     state.restTimeLeft = seconds;
+    state.restAfterAction = afterAction;
     updateStatus('rest', '휴식 중');
     timerLabelEl.textContent = '휴식 시간';
     restTimerEl.hidden = false;
@@ -787,10 +886,21 @@ async function initSession(workoutData) {
     timerLabelEl.textContent = '운동 시간';
     updateStatus('running', '운동 중');
 
+    const action = state.restAfterAction || 'NEXT_SET';
+    state.restAfterAction = null;
+
+    if (action === 'NEXT_EXERCISE') {
+      if (poseEngine) poseEngine.start();
+      if (sessionBuffer) sessionBuffer.addEvent('REST_END');
+      nextExercise();
+      return;
+    }
+
     state.currentSet++;
     setCountEl.textContent = state.currentSet;
     state.currentRep = 0;
-    repCountEl.textContent = 0;
+    state.currentSetWorkSec = 0;
+    updatePrimaryCounterDisplay();
 
     if (repCounter) {
       repCounter.repCount = 0;
@@ -817,6 +927,7 @@ async function initSession(workoutData) {
   }
 
   function nextExercise() {
+    state.restAfterAction = null;
     state.currentStepIndex++;
     const routineSteps = workoutData.routine.routine_setup;
 
@@ -839,8 +950,10 @@ async function initSession(workoutData) {
 
     state.currentSet = 1;
     state.currentRep = 0;
+    state.currentSetWorkSec = 0;
     setCountEl.textContent = 1;
-    repCountEl.textContent = 0;
+    updatePrimaryCounterDisplay();
+    updateRoutineStepDisplay();
 
     if (repCounter) repCounter.reset();
     if (sessionBuffer) {
@@ -986,6 +1099,7 @@ async function initSession(workoutData) {
 
   setupSourceSelectors();
   setupViewSelectors();
+  refreshRoutineCounterUi();
   await connectCameraSource(selectedCameraSource);
 }
 
