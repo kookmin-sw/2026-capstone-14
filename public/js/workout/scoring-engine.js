@@ -174,6 +174,16 @@ class ScoringEngine {
         const right = angles.rightElbow;
         return combineAngles(left, right, { preferHighOnMismatch: true });
       },
+      'elbow_depth': () => {
+        const left = angles.leftElbow;
+        const right = angles.rightElbow;
+        return combineAngles(left, right, { preferHighOnMismatch: true });
+      },
+      'elbow_lockout': () => {
+        const left = angles.leftElbow;
+        const right = angles.rightElbow;
+        return combineAngles(left, right, { preferHighOnMismatch: true });
+      },
       'left_elbow_angle': () => angles.leftElbow,
       'right_elbow_angle': () => angles.rightElbow,
 

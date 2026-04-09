@@ -168,9 +168,12 @@ result page
 
 1. 스쿼트 rule-based 정확도와 안정성 보강
 2. exercise module 패턴 정리
-3. 새 운동 1개씩 추가
-4. 운동별 feedback 문구와 임계값 조정
-5. 수동 테스트 루틴 정리
+3. 푸쉬업 `SIDE only`, `phase-aware` 1차 구현
+4. 새 운동 1개씩 추가
+5. 운동별 feedback 문구와 임계값 조정
+6. 수동 테스트 루틴 정리
+
+푸쉬업 1차 상세 기준은 `docs/2026-04-09_pushup_side_only_phase_aware_spec.md`를 따른다.
 
 새 운동 추가 시 체크리스트는 아래와 같다.
 

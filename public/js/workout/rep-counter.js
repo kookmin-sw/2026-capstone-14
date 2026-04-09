@@ -104,12 +104,12 @@ class RepCounter {
       'push_up': {
         primaryAngle: 'elbow_angle',
         thresholds: {
-          neutral: 160,
-          active: 90
+          neutral: 155,
+          active: 95
         },
         direction: 'decrease',
-        minDuration: 600,
-        minActiveTime: 150
+        minDuration: 700,
+        minActiveTime: 180
       },
 
       // 런지: 서있음 → 런지 → 서있음 = 1회

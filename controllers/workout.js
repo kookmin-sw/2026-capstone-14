@@ -29,6 +29,22 @@ const normalizeExerciseCode = (code) =>
         .toLowerCase()
         .replace(/-/g, '_');
 
+const EXERCISE_VIEW_FALLBACKS = {
+    push_up: {
+        allowed_views: ['SIDE'],
+        default_view: 'SIDE'
+    },
+    pushup: {
+        allowed_views: ['SIDE'],
+        default_view: 'SIDE'
+    }
+};
+
+const EXERCISE_MODULE_SCRIPT_ALIASES = {
+    push_up: 'push-up-exercise.js',
+    pushup: 'push-up-exercise.js'
+};
+
 const sanitizeCodeForScript = (code) =>
     String(code || '')
         .trim()
@@ -115,10 +131,24 @@ const buildAllowedViewInfo = (viewRows = []) => {
     };
 };
 
-const attachAllowedViewInfo = (exercise, viewRows = []) => ({
-    ...exercise,
-    ...buildAllowedViewInfo(viewRows)
-});
+const getExerciseViewFallback = (exerciseCode) => {
+    const normalizedCode = normalizeExerciseCode(exerciseCode);
+    return EXERCISE_VIEW_FALLBACKS[normalizedCode] || null;
+};
+
+const attachAllowedViewInfo = (exercise, viewRows = []) => {
+    const fallback = getExerciseViewFallback(exercise?.code);
+
+    return {
+        ...exercise,
+        ...(fallback || buildAllowedViewInfo(viewRows))
+    };
+};
+
+const getExerciseModuleScriptName = (exerciseCode) => {
+    const normalizedCode = normalizeExerciseCode(exerciseCode);
+    return EXERCISE_MODULE_SCRIPT_ALIASES[normalizedCode] || `${sanitizeCodeForScript(exerciseCode).replace(/_/g, '-')}-exercise.js`;
+};
 
 const getAllowedViewMapByExerciseIds = async (exerciseIds) => {
     if (!Array.isArray(exerciseIds) || exerciseIds.length === 0) return new Map();
@@ -621,7 +651,7 @@ const getFreeWorkoutSession = async (req, res, next) => {
             scoringProfile: getRuntimeScoringProfile(exercise.code),
             routine: null,
             routineInstance: null,
-            exerciseModuleScript: `${sanitizeCodeForScript(exercise.code).replace(/_/g, '-')}-exercise.js`,
+            exerciseModuleScript: getExerciseModuleScriptName(exercise.code),
             exerciseModuleScripts: null,
             layout: 'layouts/workout'
         });
@@ -643,8 +673,8 @@ const getRoutineWorkoutSession = async (req, res, next) => {
 
         const moduleScriptSet = new Set();
         routine.routine_setup.forEach((step) => {
-            const code = sanitizeCodeForScript(step?.exercise?.code || '');
-            if (code) moduleScriptSet.add(`${code.replace(/_/g, '-')}-exercise.js`);
+            const code = step?.exercise?.code || '';
+            if (code) moduleScriptSet.add(getExerciseModuleScriptName(code));
         });
 
         res.render('workout/session', {

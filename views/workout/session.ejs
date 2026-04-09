@@ -17,14 +17,21 @@
     .toLowerCase()
     .replace(/[^a-z0-9_-]/g, '')
     .replace(/_/g, '-');
+  const resolveExerciseModuleScriptName = (value) => {
+    const normalized = normalizeScriptName(value);
+    if (!normalized) return null;
+    if (normalized === 'pushup' || normalized === 'push-up') {
+      return 'push-up-exercise.js';
+    }
+    return `${normalized}-exercise.js`;
+  };
   const fallbackModuleScripts = [];
-  const firstScript = normalizeScriptName(currentExercise?.code);
-  if (firstScript) fallbackModuleScripts.push(`${firstScript}-exercise.js`);
+  const firstScript = resolveExerciseModuleScriptName(currentExercise?.code);
+  if (firstScript) fallbackModuleScripts.push(firstScript);
   if (isRoutineMode && routine?.routine_setup) {
     routine.routine_setup.forEach((step) => {
-      const code = normalizeScriptName(step?.exercise?.code);
-      if (!code) return;
-      const filename = `${code}-exercise.js`;
+      const filename = resolveExerciseModuleScriptName(step?.exercise?.code);
+      if (!filename) return;
       if (!fallbackModuleScripts.includes(filename)) {
         fallbackModuleScripts.push(filename);
       }
