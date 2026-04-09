@@ -1,5 +1,11 @@
 # 2026-04-09 : Phase Dataset Workload Spec
 
+> 보관용 문서
+>
+> 이 문서는 2026-04-09 시점의 `phase만 ML로 대체` 방향을 정리한 당시 스펙이다.
+> 현재 활성 구현 기준은 ML을 우선 배제하고 rule-based 확장에 집중하는
+> `docs/2026-04-09_rule_based_first_workout_spec.md`를 따른다.
+
 ## 1. 문서 목적
 
 이 문서는 2026-04-09 기준으로 논의한 `phase만 ML로 대체하고, 점수화는 rule-based로 유지` 전략과, 이를 위한 현재 코드베이스의 **학습 데이터 수집 workload**를 함께 정리한다.

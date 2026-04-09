@@ -1,10 +1,5 @@
 const { supabase } = require('../config/db');
 const { updateQuestProgress } = require('./quest');
-const {
-    normalizePhaseDataset,
-    mergePhaseLabelsIntoDetail,
-    buildPhaseDatasetExport
-} = require('../utils/phase-dataset');
 
 const SESSION_STALE_HOURS = 12;
 const VIEW_CODES = ['FRONT', 'SIDE', 'DIAGONAL'];
@@ -1097,60 +1092,6 @@ const recordSessionEvent = async (req, res) => {
     }
 };
 
-const getPhaseDataset = async (req, res) => {
-    try {
-        const { sessionId } = req.params;
-        const userId = req.user.user_id;
-        const session = await getOwnedSessionWithDetail(sessionId, userId);
-        const dataset = buildPhaseDatasetExport(session);
-
-        if (!dataset.samples.length) {
-            throw createApiError(404, '해당 세션에는 phase dataset이 없습니다.');
-        }
-
-        return res.json({
-            success: true,
-            dataset
-        });
-    } catch (error) {
-        return sendApiError(res, error, 'phase dataset 조회에 실패했습니다.');
-    }
-};
-
-const savePhaseLabels = async (req, res) => {
-    try {
-        const { sessionId } = req.params;
-        const userId = req.user.user_id;
-        const session = await getOwnedSessionWithDetail(sessionId, userId);
-
-        if (!session.final_snapshot_id) {
-            throw createApiError(404, '최종 스냅샷을 찾을 수 없습니다.');
-        }
-
-        const { detail, dataset } = mergePhaseLabelsIntoDetail(session.detail, req.body);
-
-        const { error: updateError } = await supabase
-            .from('session_snapshot_score')
-            .update({ detail })
-            .eq('session_snapshot_id', session.final_snapshot_id);
-
-        if (updateError) {
-            throw createApiError(500, 'phase 라벨 저장에 실패했습니다.');
-        }
-
-        return res.json({
-            success: true,
-            labeling: {
-                status: dataset.labeling_status,
-                labeled_frames: dataset.capture_meta.labeled_frame_count,
-                total_frames: dataset.capture_meta.frame_count
-            }
-        });
-    } catch (error) {
-        return sendApiError(res, error, 'phase 라벨 저장에 실패했습니다.');
-    }
-};
-
 const getWorkoutResult = async (req, res, next) => {
     try {
         const { sessionId } = req.params;
@@ -1239,10 +1180,7 @@ const getWorkoutResult = async (req, res, next) => {
             summary_feedback: session.summary_feedback || snapshotScore?.summary_feedback,
             duration_sec: durationSec,
             total_reps: totalReps,
-            detail: {
-                ...snapshotDetail,
-                phase_dataset: normalizePhaseDataset(snapshotDetail.phase_dataset)
-            },
+            detail: snapshotDetail,
             session_snapshot_metric: snapshotMetrics
         };
 
@@ -1307,8 +1245,6 @@ module.exports = {
     abortWorkoutSession,
     recordWorkoutSet,
     recordSessionEvent,
-    getPhaseDataset,
-    savePhaseLabels,
     getWorkoutResult,
     getExercises
 };

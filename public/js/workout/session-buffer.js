@@ -32,13 +32,6 @@ class SessionBuffer {
     // 이벤트 로그
     this.events = [];
 
-    // ML phase 학습용 프레임 샘플
-    this.phaseFrames = [];
-    this.phaseSampleMs = 200;
-    this.lastPhaseFrameTime = -Infinity;
-    this.phaseDatasetMeta = {};
-    this.phaseDataset = null;
-
     // IndexedDB 키
     this.dbKey = `fitplus_session_${sessionId}`;
 
@@ -177,42 +170,6 @@ class SessionBuffer {
     });
   }
 
-  configurePhaseDataset(meta = {}) {
-    this.phaseDatasetMeta = {
-      ...this.phaseDatasetMeta,
-      ...meta
-    };
-  }
-
-  setPhaseDataset(dataset) {
-    this.phaseDataset = dataset || null;
-  }
-
-  addFrameSample(frameSample) {
-    if (!frameSample || typeof frameSample !== 'object') {
-      return;
-    }
-
-    const relativeTime = Number.isFinite(frameSample.timestamp_ms)
-      ? Math.max(0, Math.round(frameSample.timestamp_ms))
-      : (Date.now() - this.startTime);
-
-    if ((relativeTime - this.lastPhaseFrameTime) < this.phaseSampleMs) {
-      return;
-    }
-
-    this.phaseFrames.push({
-      frame_index: this.phaseFrames.length,
-      timestamp_ms: relativeTime,
-      ...frameSample
-    });
-    this.lastPhaseFrameTime = relativeTime;
-
-    if (this.phaseFrames.length % 60 === 0) {
-      this.saveToStorage();
-    }
-  }
-
   /**
    * 로컬 스토리지에 백업 저장
    */
@@ -230,10 +187,6 @@ class SessionBuffer {
         repMetricAccumulators: this.repMetricAccumulators,
         setRecords: this.setRecords,
         events: this.events,
-        phaseFrames: this.phaseFrames,
-        phaseSampleMs: this.phaseSampleMs,
-        phaseDatasetMeta: this.phaseDatasetMeta,
-        phaseDataset: this.phaseDataset,
         savedAt: Date.now()
       };
 
@@ -260,13 +213,6 @@ class SessionBuffer {
         this.mode = parsed.mode || this.mode;
         this.selectedView = this.normalizeViewCode(parsed.selectedView) || this.selectedView;
         this.resultBasisHint = this.normalizeResultBasis(parsed.resultBasisHint) || this.resultBasisHint;
-        this.phaseFrames = parsed.phaseFrames || [];
-        this.phaseSampleMs = parsed.phaseSampleMs || 200;
-        this.phaseDatasetMeta = parsed.phaseDatasetMeta || {};
-        this.phaseDataset = parsed.phaseDataset || null;
-        this.lastPhaseFrameTime = this.phaseFrames.length > 0
-          ? (this.phaseFrames[this.phaseFrames.length - 1].timestamp_ms || 0)
-          : -Infinity;
         console.log('[SessionBuffer] 데이터 복구됨');
         return true;
       }
@@ -432,19 +378,6 @@ class SessionBuffer {
   export() {
     const finalScore = this.calculateFinalScore();
     const resultPayload = this.getResultPayload();
-    const exportedPhaseDataset = this.phaseDataset || (this.phaseFrames.length > 0
-      ? {
-          schema_version: 1,
-          sample_ms: this.phaseSampleMs,
-          exercise_code: this.phaseDatasetMeta.exerciseCode || null,
-          capture_meta: {
-            collected_at: new Date().toISOString(),
-            ...this.phaseDatasetMeta
-          },
-          feature_frames: this.phaseFrames,
-          labels: []
-        }
-      : null);
 
     // 세트 기록이 없으면 기본 1세트 생성
     const setRecords = this.setRecords.length > 0 ? this.setRecords : [{
@@ -471,7 +404,6 @@ class SessionBuffer {
         rep_records: this.repRecords,
         set_records: setRecords,
         events: this.events,
-        phase_dataset: exportedPhaseDataset,
         stats: {
           avg_rep_score: this.calculateAvgRepScore(),
           best_rep: this.getBestRep(),

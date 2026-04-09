@@ -80,12 +80,3 @@ npm test
 
 *   [코드베이스 설명 (Codebase Explanation)](docs/codebase_explanation.md): 프로젝트 구조, 주요 모듈, 아키텍처 설명
 *   [데이터베이스 구조 (Database Structure)](docs/database_structure.md): 테이블 스키마 및 관계 설명
-
-## Phase 라벨링 워크플로
-
-스쿼트 세션을 끝내면 결과 페이지에서 frame-level phase 데이터셋을 확인할 수 있습니다.
-
-1. 운동 세션을 수행하면 브라우저가 `detail.phase_dataset.feature_frames`에 학습용 feature frame을 수집합니다.
-2. 결과 페이지에서 사람이 라벨링한 JSON을 붙여넣거나 업로드합니다.
-3. `라벨 저장` 버튼이 `/api/workout/session/:sessionId/phase-labels`로 라벨을 저장합니다.
-4. `학습 JSON 다운로드` 버튼이 rule phase와 human phase가 합쳐진 데이터셋을 내려받습니다.
