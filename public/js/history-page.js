@@ -18,17 +18,6 @@
     }[char]));
   }
 
-  function safeJsonPreview(value, maxLength = 110) {
-    try {
-      const text = JSON.stringify(value);
-      if (!text) return '-';
-      if (text.length <= maxLength) return text;
-      return `${text.slice(0, maxLength)}...`;
-    } catch (_error) {
-      return '-';
-    }
-  }
-
   function formatNumber(value) {
     return new Intl.NumberFormat('ko-KR').format(Number(value) || 0);
   }
@@ -469,17 +458,6 @@
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   }
 
-  function extractPrimitiveDetailEntries(detail) {
-    if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return [];
-
-    return Object.entries(detail)
-      .filter(([key, value]) => {
-        if (['score_timeline', 'rep_records', 'set_records', 'events'].includes(key)) return false;
-        return ['string', 'number', 'boolean'].includes(typeof value);
-      })
-      .slice(0, 10);
-  }
-
   function renderSimpleList(rows, emptyMessage) {
     if (!rows.length) {
       return `<div class="chart-empty">${escapeHtml(emptyMessage)}</div>`;
@@ -561,12 +539,8 @@
       const session = payload.session || {};
       const metrics = Array.isArray(payload.metrics) ? payload.metrics : [];
       const timeline = Array.isArray(payload.timeline) ? payload.timeline : [];
-      const repRecords = Array.isArray(payload.rep_records) ? payload.rep_records : [];
-      const setRecords = Array.isArray(payload.set_records) ? payload.set_records : [];
       const sessionEvents = Array.isArray(payload.session_events) ? payload.session_events : [];
-      const detailEvents = Array.isArray(payload.detail_events) ? payload.detail_events : [];
       const routineContext = payload.routine_context || {};
-      const detail = payload.detail || {};
 
       title.textContent = `${session.exercise?.name || '운동'} · 세션 #${session.session_id || '-'}`;
 
@@ -624,27 +598,6 @@
           </div>
         `);
 
-      const repRows = repRecords.slice(-14).reverse().map((rep) => `
-        <div class="detail-simple-item">
-          <span>${formatNumber(rep.repNumber || rep.rep_no || 0)}회차</span>
-          <strong>${formatNumber(rep.score || 0)}점</strong>
-        </div>
-      `);
-
-      const setRows = setRecords.map((set) => {
-        const setNoRaw = set.set_no ?? set.setNo ?? null;
-        const actualRaw = set.actual_reps ?? set.actual_value ?? null;
-        const setNoText = Number.isFinite(Number(setNoRaw)) ? `${formatNumber(setNoRaw)}세트` : '-';
-        const actualText = Number.isFinite(Number(actualRaw)) ? formatNumber(actualRaw) : '-';
-        const durationSec = Number(set.duration_sec || 0);
-        return `
-          <div class="detail-simple-item">
-            <span>${setNoText} · 수행 ${actualText} · ${formatDuration(durationSec)}</span>
-            <strong>${escapeHtml(String(set.phase || set.status || 'WORK'))}</strong>
-          </div>
-        `;
-      });
-
       const eventRows = sessionEvents.slice(0, 14).map((event) => {
         const eventTime = event.event_time
           ? new Date(event.event_time).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -652,25 +605,10 @@
         return `
           <div class="detail-simple-item">
             <span>${escapeHtml(eventTime)} · ${escapeHtml(event.type || 'EVENT')}</span>
-            <strong>${escapeHtml(safeJsonPreview(event.payload || {}))}</strong>
+            <strong>#${formatNumber(event.event_id || 0)}</strong>
           </div>
         `;
       });
-
-      const detailEventRows = detailEvents.slice(0, 12).map((event) => `
-        <div class="detail-simple-item">
-          <span>${escapeHtml(String(event.type || event.event || 'DETAIL_EVENT'))}</span>
-          <strong>${escapeHtml(safeJsonPreview(event))}</strong>
-        </div>
-      `);
-
-      const detailEntries = extractPrimitiveDetailEntries(detail);
-      const detailEntryRows = detailEntries.map(([key, value]) => `
-        <div class="detail-key-item">
-          <label>${escapeHtml(key)}</label>
-          <div>${escapeHtml(String(value))}</div>
-        </div>
-      `);
 
       const routineEntries = [];
       if (routineContext.routine?.name) routineEntries.push(['루틴 이름', routineContext.routine.name]);
@@ -681,6 +619,16 @@
       if (routineContext.workout_set?.status) routineEntries.push(['세트 상태', routineContext.workout_set.status]);
       if (Number.isFinite(Number(routineContext.step_instance?.order_no))) {
         routineEntries.push(['스텝 순서', `${formatNumber(routineContext.step_instance.order_no)}번`]);
+      }
+      if (routineContext.workout_set?.target_type) routineEntries.push(['세트 목표 유형', String(routineContext.workout_set.target_type)]);
+      if (Number.isFinite(Number(routineContext.workout_set?.target_value))) {
+        routineEntries.push(['세트 목표 값', formatNumber(routineContext.workout_set.target_value)]);
+      }
+      if (Number.isFinite(Number(routineContext.workout_set?.actual_value))) {
+        routineEntries.push(['세트 실제 값', formatNumber(routineContext.workout_set.actual_value)]);
+      }
+      if (Number.isFinite(Number(routineContext.workout_set?.duration_sec))) {
+        routineEntries.push(['세트 운동 시간', formatDuration(routineContext.workout_set.duration_sec)]);
       }
 
       const routineContextHtml = routineEntries.length
@@ -728,37 +676,12 @@
             ${renderSimpleList(timelineRows, '타임라인 데이터가 없습니다.')}
           </article>
           <article class="detail-panel">
-            <h4>반복 기록</h4>
-            ${renderSimpleList(repRows, '반복 기록이 없습니다.')}
-          </article>
-        </section>
-
-        <section class="detail-dual-grid">
-          <article class="detail-panel">
-            <h4>세트 기록</h4>
-            ${renderSimpleList(setRows, '세트 기록이 없습니다.')}
-          </article>
-          <article class="detail-panel">
             <h4>세션 이벤트</h4>
             ${renderSimpleList(eventRows, '이벤트 기록이 없습니다.')}
           </article>
         </section>
 
-        ${detailEventRows.length ? `
-          <section class="detail-panel">
-            <h4>상세 이벤트(detail.events)</h4>
-            ${renderSimpleList(detailEventRows, '상세 이벤트가 없습니다.')}
-          </section>
-        ` : ''}
-
         ${routineContextHtml}
-
-        ${detailEntryRows.length ? `
-          <section class="detail-panel">
-            <h4>기타 Detail 필드</h4>
-            <div class="detail-key-grid">${detailEntryRows.join('')}</div>
-          </section>
-        ` : ''}
       `;
     } catch (error) {
       console.error('Session detail load failed:', error);

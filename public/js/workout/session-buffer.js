@@ -162,10 +162,9 @@ class SessionBuffer {
   /**
    * 이벤트 기록
    */
-  addEvent(type, payload = {}) {
+  addEvent(type) {
     this.events.push({
       type,
-      payload,
       timestamp: Date.now() - this.startTime
     });
   }
@@ -291,12 +290,7 @@ class SessionBuffer {
           avg_raw_value: avgRaw,
           min_raw_value: minRaw,
           max_raw_value: maxRaw,
-          sample_count: data.scores.length,
-          detail: {
-            metric_id: data.metric_id || null,
-            max_score: data.maxScore || null,
-            feedback_count: data.feedbackCount || 0
-          }
+          sample_count: data.scores.length
         });
       }
     }
@@ -362,16 +356,10 @@ class SessionBuffer {
     };
   }
 
-  generateInterimSnapshots(resultPayload) {
-    const resultUnit = resultPayload?.total_result_unit || 'COUNT';
+  generateInterimSnapshots() {
     return this.scoreTimeline.map((item) => ({
       timestamp_ms: item.timestamp,
-      score: item.score,
-      result_unit: resultUnit,
-      breakdown: item.breakdown || [],
-      detail: {
-        source: 'score_timeline'
-      }
+      score: item.score
     }));
   }
 
@@ -379,14 +367,7 @@ class SessionBuffer {
     const finalScore = this.calculateFinalScore();
     const resultPayload = this.getResultPayload();
 
-    // 세트 기록이 없으면 기본 1세트 생성
-    const setRecords = this.setRecords.length > 0 ? this.setRecords : [{
-      set_no: 1,
-      phase: 'WORK',
-      actual_reps: this.getTotalReps(),
-      duration_sec: this.getDuration()
-    }];
-    const interimSnapshots = this.generateInterimSnapshots(resultPayload);
+    const interimSnapshots = this.generateInterimSnapshots();
 
     return {
       // 기본 세션 정보
@@ -395,26 +376,9 @@ class SessionBuffer {
       final_score: finalScore,
       summary_feedback: this.generateSummaryFeedback(finalScore),
 
-      // 상세 데이터 (detail JSON)
-      detail: {
-        exercise_code: this.exerciseCode || null,
-        mode: this.mode,
-        selected_view: this.selectedView,
-        score_timeline: this.scoreTimeline,
-        rep_records: this.repRecords,
-        set_records: setRecords,
-        events: this.events,
-        stats: {
-          avg_rep_score: this.calculateAvgRepScore(),
-          best_rep: this.getBestRep(),
-          total_sets: setRecords.length
-        }
-      },
-
       // 별도 테이블용 데이터 (서버에서 처리)
       metric_results: this.generateMetricResults(),
       interim_snapshots: interimSnapshots,
-      set_records: setRecords,
       events: this.events
     };
   }

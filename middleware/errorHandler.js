@@ -20,13 +20,27 @@ const notFound = (req, res, next) => {
 
 // 전역 에러 핸들러
 const errorHandler = (err, req, res, next) => {
-    // 상태 코드 결정 (이미 설정된 경우 유지, 아니면 500)
-    const statusCode = res.statusCode !== 200 ? res.statusCode : 500;
+    const isPayloadTooLarge =
+        err?.type === 'entity.too.large' ||
+        err?.name === 'PayloadTooLargeError' ||
+        err?.status === 413 ||
+        err?.statusCode === 413;
+
+    // 상태 코드 결정 (에러 객체 우선 -> 기존 res 상태 코드 -> 기본값)
+    let statusCode = err?.statusCode || err?.status || (res.statusCode !== 200 ? res.statusCode : 500);
+
+    if (isPayloadTooLarge) {
+        statusCode = 413;
+    }
+
+    const defaultMessage = isPayloadTooLarge
+        ? '요청 본문 크기가 너무 큽니다. 데이터를 줄이거나 요청을 나눠서 다시 시도해주세요.'
+        : '서버에서 오류가 발생했습니다.';
     
     // 에러 정보 구성
     const errorInfo = {
         statusCode,
-        message: err.message || '서버에서 오류가 발생했습니다.',
+        message: isPayloadTooLarge ? defaultMessage : (err.message || defaultMessage),
         // 개발 환경에서만 스택 트레이스 표시
         stack: process.env.NODE_ENV === 'production' ? null : err.stack
     };
@@ -41,6 +55,7 @@ const errorHandler = (err, req, res, next) => {
     if (req.xhr || req.headers.accept?.includes('application/json')) {
         return res.status(statusCode).json({
             success: false,
+            error: errorInfo.message,
             message: errorInfo.message,
             stack: errorInfo.stack
         });

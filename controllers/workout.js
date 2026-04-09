@@ -21,8 +21,6 @@ const sendApiError = (res, error, fallbackMessage = '요청 처리 중 오류가
     });
 };
 
-const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-
 const normalizeExerciseCode = (code) =>
     String(code || '')
         .trim()
@@ -300,10 +298,6 @@ const cleanupStaleOpenSessions = async (userId) => {
     const staleEventRows = staleIds.map((sessionId) => ({
         session_id: sessionId,
         type: 'SESSION_ABORT_STALE',
-        payload: {
-            reason: 'STALE_TIMEOUT',
-            stale_hours: SESSION_STALE_HOURS
-        },
         event_time: endedAtIso
     }));
 
@@ -330,7 +324,6 @@ const normalizeEvents = (events, sessionId, startedAtIso) => {
             return {
                 session_id: sessionId,
                 type: type.slice(0, 50),
-                payload: isPlainObject(event?.payload) ? event.payload : (event?.payload ?? {}),
                 event_time: eventTime
             };
         })
@@ -380,14 +373,7 @@ const normalizeSnapshotBreakdownMetrics = (breakdown) => {
                 avg_raw_value: Number.isFinite(rawValue) ? rawValue : null,
                 min_raw_value: Number.isFinite(minRaw) ? minRaw : null,
                 max_raw_value: Number.isFinite(maxRaw) ? maxRaw : null,
-                sample_count: sampleCount,
-                detail: isPlainObject(item?.detail)
-                    ? item.detail
-                    : {
-                        max_score: Number.isFinite(Number(item?.maxScore)) ? Number(item.maxScore) : null,
-                        weight: Number.isFinite(Number(item?.weight)) ? Number(item.weight) : null,
-                        feedback: toSafeText(item?.feedback, 500)
-                    }
+                sample_count: sampleCount
             };
         })
         .filter(Boolean);
@@ -403,23 +389,11 @@ const normalizeInterimSnapshots = (payload, startedAtIso) => {
         ? payload.interim_snapshots
         : [];
 
-    const timelineSnapshots = explicitSnapshots.length === 0 && Array.isArray(payload?.detail?.score_timeline)
-        ? payload.detail.score_timeline
-        : [];
-
-    const sourceSnapshots = explicitSnapshots.length > 0
-        ? explicitSnapshots
-        : timelineSnapshots.map((item) => ({
-            timestamp_ms: item?.timestamp,
-            score: item?.score,
-            breakdown: item?.breakdown
-        }));
-
-    if (sourceSnapshots.length === 0) return [];
+    if (explicitSnapshots.length === 0) return [];
 
     const startedMs = new Date(startedAtIso).getTime();
 
-    return sourceSnapshots
+    return explicitSnapshots
         .map((snapshot, index) => {
             const timestampMs = Number(snapshot?.timestamp_ms ?? snapshot?.timestamp);
             const hasRelativeTimestamp = Number.isFinite(timestampMs) && timestampMs >= 0;
@@ -438,26 +412,10 @@ const normalizeInterimSnapshots = (payload, startedAtIso) => {
                 result_value: toNullableNonNegativeInt(snapshot?.result_value),
                 result_unit: normalizeResultUnit(snapshot?.result_unit),
                 summary_feedback: toSafeText(snapshot?.summary_feedback, 500),
-                detail: isPlainObject(snapshot?.detail) ? snapshot.detail : {},
                 metrics: breakdownMetrics
             };
         })
         .filter(Boolean);
-};
-
-const buildFinalDetail = (payload, normalizedEvents, normalizedInterimSnapshots) => {
-    const sourceDetail = isPlainObject(payload?.detail) ? payload.detail : {};
-    const setRecords = Array.isArray(payload?.set_records) ? payload.set_records : [];
-
-    return {
-        ...sourceDetail,
-        selected_view: normalizeSelectedView(payload?.selected_view) || null,
-        set_records: setRecords,
-        event_count: normalizedEvents.length,
-        interim_snapshot_count: normalizedInterimSnapshots.length,
-        saved_at: new Date().toISOString(),
-        schema_version: 3
-    };
 };
 
 const inferResultFields = (payload, session, endedAtIso) => {
@@ -527,47 +485,6 @@ const getOwnedSession = async (sessionId, userId) => {
     }
 
     return session;
-};
-
-const getOwnedSessionWithDetail = async (sessionId, userId) => {
-    const session = await getOwnedSession(sessionId, userId);
-
-    const { data: finalSnapshot, error: snapshotError } = await supabase
-        .from('session_snapshot')
-        .select('session_snapshot_id')
-        .eq('session_id', sessionId)
-        .eq('snapshot_type', 'FINAL')
-        .order('snapshot_no', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-    if (snapshotError) {
-        throw createApiError(500, '최종 스냅샷 조회에 실패했습니다.');
-    }
-
-    if (!finalSnapshot?.session_snapshot_id) {
-        return {
-            ...session,
-            final_snapshot_id: null,
-            detail: {}
-        };
-    }
-
-    const { data: snapshotScore, error: scoreError } = await supabase
-        .from('session_snapshot_score')
-        .select('detail')
-        .eq('session_snapshot_id', finalSnapshot.session_snapshot_id)
-        .maybeSingle();
-
-    if (scoreError) {
-        throw createApiError(500, '최종 스냅샷 상세 조회에 실패했습니다.');
-    }
-
-    return {
-        ...session,
-        final_snapshot_id: finalSnapshot.session_snapshot_id,
-        detail: isPlainObject(snapshotScore?.detail) ? snapshotScore.detail : {}
-    };
 };
 
 const assertSessionWritable = async (sessionId, userId) => {
@@ -758,7 +675,6 @@ const endWorkoutSession = async (req, res) => {
         const normalizedInterimSnapshots = normalizeInterimSnapshots(req.body || {}, session.started_at);
         const normalizedFinalMetrics = normalizeFinalMetricResults(req.body?.metric_results || []);
         const normalizedEvents = normalizeEvents(req.body?.events || [], sessionId, session.started_at);
-        const finalDetail = buildFinalDetail(req.body || {}, normalizedEvents, normalizedInterimSnapshots);
 
         const { error: deleteSnapshotError } = await supabase
             .from('session_snapshot')
@@ -827,8 +743,7 @@ const endWorkoutSession = async (req, res) => {
                 result_basis: resultFields.result_basis,
                 result_value: interim.result_value,
                 result_unit: interim.result_unit || resultFields.total_result_unit,
-                summary_feedback: interim.summary_feedback,
-                detail: interim.detail || {}
+                summary_feedback: interim.summary_feedback
             });
 
             for (const metric of interim.metrics) {
@@ -840,8 +755,7 @@ const endWorkoutSession = async (req, res) => {
                     avg_raw_value: metric.avg_raw_value,
                     min_raw_value: metric.min_raw_value,
                     max_raw_value: metric.max_raw_value,
-                    sample_count: metric.sample_count,
-                    detail: metric.detail || {}
+                    sample_count: metric.sample_count
                 });
             }
         }
@@ -857,8 +771,7 @@ const endWorkoutSession = async (req, res) => {
             result_basis: resultFields.result_basis,
             result_value: resultFields.total_result_value,
             result_unit: resultFields.total_result_unit,
-            summary_feedback: summaryFeedback,
-            detail: finalDetail
+            summary_feedback: summaryFeedback
         });
 
         for (const metric of normalizedFinalMetrics) {
@@ -870,8 +783,7 @@ const endWorkoutSession = async (req, res) => {
                 avg_raw_value: metric.avg_raw_value,
                 min_raw_value: metric.min_raw_value,
                 max_raw_value: metric.max_raw_value,
-                sample_count: metric.sample_count,
-                detail: metric.detail || {}
+                sample_count: metric.sample_count
             });
         }
 
@@ -933,12 +845,16 @@ const endWorkoutSession = async (req, res) => {
         }
 
         try {
+            const setRecordCount = normalizedEvents
+                .filter((event) => event.type === 'SET_RECORD')
+                .length;
+
             await updateQuestProgress(userId, {
                 exercise_code: updatedSession.exercise?.code || session.exercise?.code,
                 duration_sec: resultFields.duration_sec,
                 total_reps: resultFields.total_reps,
                 final_score: finalScore,
-                sets: Array.isArray(req.body?.set_records) ? req.body.set_records.length : 1
+                sets: setRecordCount > 0 ? setRecordCount : 1
             });
         } catch (questError) {
             console.error('Quest progress update failed:', questError);
@@ -988,15 +904,9 @@ const abortWorkoutSession = async (req, res) => {
             throw createApiError(500, '세션 중단 처리에 실패했습니다.');
         }
 
-        const reason = toSafeText(req.body?.reason || 'USER_ABORT', 120);
         await supabase.from('session_event').insert({
             session_id: sessionId,
             type: 'SESSION_ABORT',
-            payload: {
-                reason,
-                duration_sec: resultFields.duration_sec,
-                total_reps: resultFields.total_reps
-            },
             event_time: endedAtIso
         });
 
@@ -1015,14 +925,6 @@ const recordWorkoutSet = async (req, res) => {
         const userId = req.user.user_id;
         const session = await assertSessionWritable(sessionId, userId);
 
-        const payload = {
-            set_no: toNullableNonNegativeInt(req.body?.set_no),
-            phase: toSafeText(req.body?.phase, 50),
-            target_reps: toNullableNonNegativeInt(req.body?.target_reps),
-            actual_reps: toNullableNonNegativeInt(req.body?.actual_reps),
-            duration_sec: toNullableNonNegativeInt(req.body?.duration_sec)
-        };
-
         const timestampMs = Number(req.body?.timestamp);
         const hasRelativeTimestamp = Number.isFinite(timestampMs) && timestampMs >= 0;
         const eventTime = hasRelativeTimestamp
@@ -1034,7 +936,6 @@ const recordWorkoutSet = async (req, res) => {
             .insert({
                 session_id: sessionId,
                 type: 'SET_RECORD',
-                payload,
                 event_time: eventTime
             })
             .select()
@@ -1067,16 +968,11 @@ const recordSessionEvent = async (req, res) => {
             ? new Date(new Date(session.started_at).getTime() + Math.round(timestampMs)).toISOString()
             : new Date().toISOString();
 
-        const payload = isPlainObject(req.body?.payload)
-            ? req.body.payload
-            : (req.body?.payload ?? {});
-
         const { data: event, error } = await supabase
             .from('session_event')
             .insert({
                 session_id: sessionId,
                 type,
-                payload,
                 event_time: eventTime
             })
             .select()
@@ -1143,12 +1039,12 @@ const getWorkoutResult = async (req, res, next) => {
             const [{ data: scoreRow }, { data: metricRows }] = await Promise.all([
                 supabase
                     .from('session_snapshot_score')
-                    .select('score, result_basis, result_value, result_unit, summary_feedback, detail')
+                    .select('score, result_basis, result_value, result_unit, summary_feedback')
                     .eq('session_snapshot_id', snapshotId)
                     .maybeSingle(),
                 supabase
                     .from('session_snapshot_metric')
-                    .select('metric_key, metric_name, avg_score, avg_raw_value, min_raw_value, max_raw_value, sample_count, detail')
+                    .select('metric_key, metric_name, avg_score, avg_raw_value, min_raw_value, max_raw_value, sample_count')
                     .eq('session_snapshot_id', snapshotId)
                     .order('avg_score', { ascending: false })
             ]);
@@ -1157,7 +1053,6 @@ const getWorkoutResult = async (req, res, next) => {
             snapshotMetrics = metricRows || [];
         }
 
-        const snapshotDetail = isPlainObject(snapshotScore?.detail) ? snapshotScore.detail : {};
         const mergedResultBasis = session.result_basis || snapshotScore?.result_basis || 'REPS';
         const mergedResultValue = session.total_result_value ?? snapshotScore?.result_value ?? 0;
         const mergedResultUnit = session.total_result_unit || snapshotScore?.result_unit || (mergedResultBasis === 'REPS' ? 'COUNT' : 'SEC');
@@ -1180,7 +1075,6 @@ const getWorkoutResult = async (req, res, next) => {
             summary_feedback: session.summary_feedback || snapshotScore?.summary_feedback,
             duration_sec: durationSec,
             total_reps: totalReps,
-            detail: snapshotDetail,
             session_snapshot_metric: snapshotMetrics
         };
 

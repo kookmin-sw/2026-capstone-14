@@ -7,6 +7,7 @@ const { notFound, errorHandler } = require("./middleware/errorHandler");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const BODY_LIMIT = process.env.BODY_LIMIT || '5mb';
 
 // 레이아웃 및 뷰 엔진 설정
 app.use(expressLayouts);
@@ -16,8 +17,12 @@ app.use(express.static("public"));
 app.set('layout', 'layouts/main'); // 기본 레이아웃 설정
 
 // 미들웨어 설정
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+app.use(express.urlencoded({
+    extended: true,
+    limit: BODY_LIMIT,
+    parameterLimit: 50000
+}));
+app.use(express.json({ limit: BODY_LIMIT }));
 app.use(cookieParser());
 
 // 인증 상태(UI용)를 모든 뷰에 전달

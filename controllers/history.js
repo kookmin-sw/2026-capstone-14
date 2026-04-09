@@ -4,8 +4,6 @@ const SESSION_STATUSES = ['DONE', 'ABORTED'];
 const RESULT_BASIS_CODES = ['REPS', 'DURATION'];
 const RESULT_UNIT_CODES = ['COUNT', 'SEC'];
 
-const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-
 const toFiniteNumber = (value, fallback = 0) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
@@ -31,6 +29,12 @@ const computeDurationSecFromRange = (startedAtIso, endedAtIso = new Date().toISO
     const endMs = new Date(endedAtIso).getTime();
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return 0;
     return Math.max(0, Math.round((endMs - startMs) / 1000));
+};
+
+const clampScore = (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return null;
+    return Math.max(0, Math.min(100, parsed));
 };
 
 const getTodayRange = () => {
@@ -130,6 +134,51 @@ const mergeSessionResult = (session, snapshotScore = null) => {
         total_reps: totalReps,
         total_duration_result: totalDurationResult
     };
+};
+
+const buildTimelineFromSnapshots = ({
+    startedAt,
+    interimSnapshots = [],
+    interimScoreBySnapshotId = new Map(),
+    finalSnapshot = null,
+    finalScore = null
+}) => {
+    const startedMs = new Date(startedAt).getTime();
+
+    const toTimestamp = (recordedAt, fallbackMs = 0) => {
+        const recordedMs = new Date(recordedAt).getTime();
+        if (!Number.isFinite(recordedMs) || !Number.isFinite(startedMs)) return fallbackMs;
+        return Math.max(0, recordedMs - startedMs);
+    };
+
+    const rows = [];
+
+    for (const snapshot of interimSnapshots || []) {
+        const score = clampScore(interimScoreBySnapshotId.get(snapshot.session_snapshot_id));
+        if (score == null) continue;
+
+        rows.push({
+            snapshot_no: snapshot.snapshot_no,
+            recorded_at: snapshot.recorded_at,
+            timestamp: toTimestamp(snapshot.recorded_at, Math.max(0, Number(snapshot.snapshot_no || 0) * 1000)),
+            score
+        });
+    }
+
+    const safeFinalScore = clampScore(finalScore);
+    if (finalSnapshot && safeFinalScore != null) {
+        rows.push({
+            snapshot_no: finalSnapshot.snapshot_no,
+            recorded_at: finalSnapshot.recorded_at,
+            timestamp: toTimestamp(
+                finalSnapshot.recorded_at,
+                Math.max(0, Number(finalSnapshot.snapshot_no || rows.length + 1) * 1000)
+            ),
+            score: safeFinalScore
+        });
+    }
+
+    return rows.sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
 };
 
 const calculateStreak = (rows = []) => {
@@ -235,7 +284,7 @@ const fetchFinalSnapshotMaps = async (sessionIds = []) => {
 
     const { data: scoreRows, error: scoreError } = await supabase
         .from('session_snapshot_score')
-        .select('session_snapshot_id, score, result_basis, result_value, result_unit, summary_feedback, detail')
+        .select('session_snapshot_id, score, result_basis, result_value, result_unit, summary_feedback')
         .in('session_snapshot_id', snapshotIds);
 
     if (scoreError) throw scoreError;
@@ -285,8 +334,7 @@ const loadRoutineContextBySetId = async (setId) => {
             rest_sec_after,
             status,
             started_at,
-            ended_at,
-            detail
+            ended_at
         `)
         .eq('set_id', setId)
         .maybeSingle();
@@ -622,12 +670,12 @@ const getSessionDetail = async (req, res, next) => {
             const [{ data: scoreRow, error: scoreError }, { data: metricRows, error: metricError }] = await Promise.all([
                 supabase
                     .from('session_snapshot_score')
-                    .select('score, result_basis, result_value, result_unit, summary_feedback, detail')
+                    .select('score, result_basis, result_value, result_unit, summary_feedback')
                     .eq('session_snapshot_id', finalSnapshot.session_snapshot_id)
                     .maybeSingle(),
                 supabase
                     .from('session_snapshot_metric')
-                    .select('metric_key, metric_name, avg_score, avg_raw_value, min_raw_value, max_raw_value, sample_count, detail')
+                    .select('metric_key, metric_name, avg_score, avg_raw_value, min_raw_value, max_raw_value, sample_count')
                     .eq('session_snapshot_id', finalSnapshot.session_snapshot_id)
             ]);
 
@@ -638,20 +686,47 @@ const getSessionDetail = async (req, res, next) => {
             snapshotMetrics = metricRows || [];
         }
 
+        const { data: interimSnapshots, error: interimSnapshotError } = await supabase
+            .from('session_snapshot')
+            .select('session_snapshot_id, snapshot_no, recorded_at')
+            .eq('session_id', sessionId)
+            .eq('snapshot_type', 'INTERIM')
+            .order('snapshot_no', { ascending: true });
+        if (interimSnapshotError) throw interimSnapshotError;
+
+        const interimSnapshotIds = (interimSnapshots || [])
+            .map((snapshot) => snapshot.session_snapshot_id)
+            .filter(Boolean);
+
+        let interimScoreBySnapshotId = new Map();
+        if (interimSnapshotIds.length > 0) {
+            const { data: interimScoreRows, error: interimScoreError } = await supabase
+                .from('session_snapshot_score')
+                .select('session_snapshot_id, score')
+                .in('session_snapshot_id', interimSnapshotIds);
+            if (interimScoreError) throw interimScoreError;
+
+            interimScoreBySnapshotId = new Map(
+                (interimScoreRows || []).map((row) => [row.session_snapshot_id, row.score])
+            );
+        }
+
         const { data: sessionEvents, error: eventError } = await supabase
             .from('session_event')
-            .select('event_id, event_time, type, payload')
+            .select('event_id, event_time, type')
             .eq('session_id', sessionId)
             .order('event_time', { ascending: false })
             .limit(100);
         if (eventError) throw eventError;
 
         const mergedSession = mergeSessionResult(session, snapshotScore);
-        const detail = isPlainObject(snapshotScore?.detail) ? snapshotScore.detail : {};
-        const timeline = Array.isArray(detail.score_timeline) ? detail.score_timeline : [];
-        const repRecords = Array.isArray(detail.rep_records) ? detail.rep_records : [];
-        const setRecords = Array.isArray(detail.set_records) ? detail.set_records : [];
-        const detailEvents = Array.isArray(detail.events) ? detail.events : [];
+        const timeline = buildTimelineFromSnapshots({
+            startedAt: mergedSession.started_at,
+            interimSnapshots,
+            interimScoreBySnapshotId,
+            finalSnapshot,
+            finalScore: snapshotScore?.score ?? mergedSession.final_score
+        });
 
         const sortedMetrics = [...snapshotMetrics].sort((a, b) => {
             const scoreDiff = toFiniteNumber(b.avg_score, 0) - toFiniteNumber(a.avg_score, 0);
@@ -675,12 +750,8 @@ const getSessionDetail = async (req, res, next) => {
             },
             metrics: sortedMetrics,
             timeline,
-            rep_records: repRecords,
-            set_records: setRecords,
-            detail_events: detailEvents,
             session_events: sessionEvents || [],
-            routine_context: routineContext,
-            detail
+            routine_context: routineContext
         });
     } catch (error) {
         next(error);
@@ -862,4 +933,3 @@ module.exports = {
     getHistoryStats,
     deleteSession
 };
-
