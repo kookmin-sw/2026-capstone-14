@@ -224,6 +224,12 @@ async function initSession(workoutData) {
       state.phase = 'WORKING';
 
       sessionBuffer = new SessionBuffer(state.sessionId);
+      sessionBuffer.configurePhaseDataset({
+        exerciseCode: getCurrentExerciseCode(),
+        mode: workoutData.mode,
+        scoringProfileId: workoutData.scoringProfile?.scoring_profile_id || null,
+        scoringProfileVersion: workoutData.scoringProfile?.version || null
+      });
       sessionBuffer.addEvent('SESSION_START', { exercise: workoutData.exercise.code });
 
       updateStatus('running', '운동 중');
@@ -280,6 +286,7 @@ async function initSession(workoutData) {
 
     const frameGate = getFrameGateResult(angles);
     if (!frameGate.isReady) {
+      collectPhaseFrame(angles, { frameGate });
       if (poseEngine && poseEngine.setVisualFeedback) {
         poseEngine.setVisualFeedback([]);
       }
@@ -318,6 +325,11 @@ async function initSession(workoutData) {
     if (sessionBuffer) {
       sessionBuffer.addScore(liveScoreResult);
     }
+    collectPhaseFrame(angles, {
+      frameGate,
+      rawScore: rawScoreResult.score,
+      liveScore: liveScoreResult.score
+    });
 
     const shouldCheckFeedback = repCounter?.pattern?.isTimeBased ? true : repCounter?.isInProgress();
     if (shouldCheckFeedback) {
@@ -382,6 +394,57 @@ async function initSession(workoutData) {
     }
 
     return scoreResult;
+  }
+
+  function roundMetric(value, digits = 1) {
+    if (!Number.isFinite(value)) return null;
+    const base = Math.pow(10, digits);
+    return Math.round(value * base) / base;
+  }
+
+  function buildPhaseFrameSample(angles, extra = {}) {
+    const kneeAlignment = angles?.kneeAlignment || {};
+    const primaryAngle = repCounter?.pattern?.primaryAngle
+      ? repCounter.getAngleValue(angles, repCounter.pattern.primaryAngle)
+      : null;
+    const kneeAngle = repCounter?.getAngleValue ? repCounter.getAngleValue(angles, 'knee_angle') : null;
+    const hipAngle = repCounter?.getAngleValue ? repCounter.getAngleValue(angles, 'hip_angle') : null;
+    const spineAngle = repCounter?.getAngleValue ? repCounter.getAngleValue(angles, 'spine_angle') : null;
+    const kneeAlignmentAvg = Number.isFinite(kneeAlignment.left) && Number.isFinite(kneeAlignment.right)
+      ? (Math.abs(kneeAlignment.left) + Math.abs(kneeAlignment.right)) / 2
+      : null;
+
+    return {
+      exercise_code: getCurrentExerciseCode(),
+      rep_state: repCounter?.currentState || window.REP_STATES?.NEUTRAL || 'UNKNOWN',
+      rule_phase: repCounter?.currentPhase || window.REP_PHASES?.NEUTRAL || 'UNKNOWN',
+      view: angles?.view || 'UNKNOWN',
+      angle_source: angles?.angleSource || 'UNKNOWN',
+      current_score: Number.isFinite(extra.liveScore) ? Math.round(extra.liveScore) : null,
+      quality_score: roundMetric(angles?.quality?.score, 3),
+      quality_level: angles?.quality?.level || 'UNKNOWN',
+      tracked_joint_ratio: roundMetric(angles?.quality?.trackedJointRatio, 3),
+      in_frame_ratio: roundMetric(angles?.quality?.inFrameRatio, 3),
+      bottom_reached: Boolean(repCounter?.bottomReached),
+      ascent_started: Boolean(repCounter?.ascentStarted),
+      features: {
+        primary_angle: roundMetric(primaryAngle),
+        knee_angle: roundMetric(kneeAngle),
+        hip_angle: roundMetric(hipAngle),
+        spine_angle: roundMetric(spineAngle),
+        left_knee: roundMetric(angles?.leftKnee),
+        right_knee: roundMetric(angles?.rightKnee),
+        knee_symmetry: Number.isFinite(angles?.leftKnee) && Number.isFinite(angles?.rightKnee)
+          ? roundMetric(Math.abs(angles.leftKnee - angles.rightKnee))
+          : null,
+        knee_alignment: roundMetric(kneeAlignmentAvg, 3)
+      }
+    };
+  }
+
+  function collectPhaseFrame(angles, extra = {}) {
+    if (!sessionBuffer || !angles) return;
+    sessionBuffer.addFrameSample(buildPhaseFrameSample(angles, extra));
   }
 
   function updateRepMetricBuffer(scoreResult) {
@@ -615,6 +678,13 @@ async function initSession(workoutData) {
 
     if (!bindEnginesToCurrentExercise()) {
       return false;
+    }
+    if (sessionBuffer) {
+      sessionBuffer.configurePhaseDataset({
+        exerciseCode: getCurrentExerciseCode(),
+        scoringProfileId: workoutData.scoringProfile?.scoring_profile_id || null,
+        scoringProfileVersion: workoutData.scoringProfile?.version || null
+      });
     }
 
     resetStepUiState();

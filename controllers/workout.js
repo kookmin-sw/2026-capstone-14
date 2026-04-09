@@ -1,5 +1,10 @@
 const { supabase } = require('../config/db');
 const { updateQuestProgress } = require('./quest');
+const {
+    normalizePhaseDataset,
+    mergePhaseLabelsIntoDetail,
+    buildPhaseDatasetExport
+} = require('../utils/phase-dataset');
 
 const SESSION_STALE_HOURS = 12;
 
@@ -306,7 +311,7 @@ const buildSafeDetail = (detail, setRows, eventRows) => {
         event_time: eventRow.event_time
     }));
 
-    return {
+    const safeDetail = {
         ...source,
         set_records: setRecords,
         events,
@@ -315,6 +320,13 @@ const buildSafeDetail = (detail, setRows, eventRows) => {
             schema_version: 2
         }
     };
+
+    const phaseDatasetSource = source.phase_dataset || source.ml_phase_dataset;
+    if (phaseDatasetSource) {
+        safeDetail.phase_dataset = normalizePhaseDataset(phaseDatasetSource);
+    }
+
+    return safeDetail;
 };
 
 const getOwnedSession = async (sessionId, userId) => {
@@ -327,6 +339,31 @@ const getOwnedSession = async (sessionId, userId) => {
             routine_instance_id,
             started_at,
             ended_at,
+            exercise:exercise_id (
+                code,
+                name
+            )
+        `)
+        .eq('session_id', sessionId)
+        .eq('user_id', userId)
+        .single();
+
+    if (error || !session) {
+        throw createApiError(404, '세션을 찾을 수 없습니다.');
+    }
+
+    return session;
+};
+
+const getOwnedSessionWithDetail = async (sessionId, userId) => {
+    const { data: session, error } = await supabase
+        .from('workout_session')
+        .select(`
+            session_id,
+            user_id,
+            started_at,
+            ended_at,
+            detail,
             exercise:exercise_id (
                 code,
                 name
@@ -398,6 +435,7 @@ const getFreeWorkoutSession = async (req, res, next) => {
             scoringProfile,
             routine: null,
             routineInstance: null,
+            query: req.query,
             layout: 'layouts/workout'
         });
     } catch (error) {
@@ -437,6 +475,7 @@ const getRoutineWorkoutSession = async (req, res, next) => {
             scoringProfile: firstStep.scoring_profile,
             routine,
             routineInstance: null,
+            query: req.query,
             layout: 'layouts/workout'
         });
     } catch (error) {
@@ -858,6 +897,58 @@ const recordSessionEvent = async (req, res) => {
     }
 };
 
+// phase dataset 조회 API
+const getPhaseDataset = async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        const userId = req.user.user_id;
+        const session = await getOwnedSessionWithDetail(sessionId, userId);
+        const dataset = buildPhaseDatasetExport(session);
+
+        if (!dataset.samples.length) {
+            throw createApiError(404, '해당 세션에는 phase dataset이 없습니다.');
+        }
+
+        return res.json({
+            success: true,
+            dataset
+        });
+    } catch (error) {
+        return sendApiError(res, error, 'phase dataset 조회에 실패했습니다.');
+    }
+};
+
+// 사람이 라벨링한 phase JSON 저장 API
+const savePhaseLabels = async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        const userId = req.user.user_id;
+        const session = await getOwnedSessionWithDetail(sessionId, userId);
+        const { detail, dataset } = mergePhaseLabelsIntoDetail(session.detail, req.body);
+
+        const { error: updateError } = await supabase
+            .from('workout_session')
+            .update({ detail })
+            .eq('session_id', sessionId)
+            .eq('user_id', userId);
+
+        if (updateError) {
+            throw createApiError(500, 'phase 라벨 저장에 실패했습니다.');
+        }
+
+        return res.json({
+            success: true,
+            labeling: {
+                status: dataset.labeling_status,
+                labeled_frames: dataset.capture_meta.labeled_frame_count,
+                total_frames: dataset.capture_meta.frame_count
+            }
+        });
+    } catch (error) {
+        return sendApiError(res, error, 'phase 라벨 저장에 실패했습니다.');
+    }
+};
+
 // 운동 결과 페이지
 const getWorkoutResult = async (req, res, next) => {
     try {
@@ -962,6 +1053,8 @@ module.exports = {
     abortWorkoutSession,
     recordWorkoutSet,
     recordSessionEvent,
+    getPhaseDataset,
+    savePhaseLabels,
     getWorkoutResult,
     getExercises
 };

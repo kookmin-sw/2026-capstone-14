@@ -18,6 +18,8 @@ const {
     abortWorkoutSession,
     recordWorkoutSet,
     recordSessionEvent,
+    getPhaseDataset,
+    savePhaseLabels,
     getWorkoutResult,
     getExercises
 } = require('../controllers/workout');
@@ -62,5 +64,7 @@ router.put('/api/workout/session/:sessionId/end', requireAuth, endWorkoutSession
 router.post('/api/workout/session/:sessionId/abort', requireAuth, abortWorkoutSession);
 router.post('/api/workout/session/:sessionId/set', requireAuth, recordWorkoutSet);
 router.post('/api/workout/session/:sessionId/event', requireAuth, recordSessionEvent);
+router.get('/api/workout/session/:sessionId/phase-dataset', requireAuth, getPhaseDataset);
+router.post('/api/workout/session/:sessionId/phase-labels', requireAuth, savePhaseLabels);
 
 module.exports = router;
