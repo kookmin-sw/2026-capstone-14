@@ -1,266 +1,382 @@
-<div class="page active">
+<%
+  const safeToday = today || '';
+  const safeTodaySummary = todaySummary || { count: 0, totalMinutes: 0, totalReps: 0, totalDurationResultSec: 0, avgScore: 0 };
+  const safeWeekSummary = weekSummary || { count: 0, totalMinutes: 0, totalReps: 0, totalDurationResultSec: 0, avgScore: 0 };
+  const safeQuickRoutines = Array.isArray(quickRoutines) ? quickRoutines : [];
+  const safeRecentSessions = Array.isArray(recentSessions) ? recentSessions : [];
+  const safeExercises = Array.isArray(exercises) ? exercises : [];
+  const safeActivityDays = Array.isArray(activityDays) ? activityDays : [];
+
+  const formatResultValue = (session) => {
+    const basis = String(session?.result_basis || '').toUpperCase();
+    const unit = String(session?.total_result_unit || '').toUpperCase();
+    const value = Math.max(0, Number(session?.total_result_value) || 0);
+    if (basis === 'REPS' || unit === 'COUNT') return `${value}회`;
+    if (basis === 'DURATION' || unit === 'SEC') return `${value}초`;
+    return `${value}`;
+  };
+%>
+
+<div class="page active home-v2-page">
   <section class="page-header">
     <div>
       <h1>반갑습니다, <%= typeof user !== 'undefined' && user ? user.nickname : '게스트' %>님!</h1>
-      <p class="date"><%= today %></p>
+      <p class="date"><%= safeToday %></p>
     </div>
   </section>
 
-  <div class="grid three">
-    <!-- 연속 운동 기록 카드 -->
-    <div class="card hero">
-      <div class="card-header">
-        <h3>나의 운동 기록</h3>
-      </div>
-      <div class="hero-metrics">
-        <div>
-          <span class="metric" id="streak-count"><%= typeof streak !== 'undefined' ? streak : 0 %></span>
-          <span class="metric-label">일 연속</span>
-        </div>
-        <div>
-          <span class="metric" id="today-minutes"><%= typeof todayMinutes !== 'undefined' ? todayMinutes : 0 %></span>
-          <span class="metric-label">분 오늘</span>
-        </div>
-      </div>
-      <p class="muted">꾸준함이 실력이 됩니다!</p>
+  <div class="grid four home-summary-grid">
+    <div class="card hero home-summary-card">
+      <span class="summary-label">연속 운동</span>
+      <strong class="summary-value"><%= streak || 0 %>일</strong>
+      <span class="summary-meta">꾸준함이 실력입니다</span>
     </div>
+    <div class="card home-summary-card">
+      <span class="summary-label">오늘</span>
+      <strong class="summary-value"><%= safeTodaySummary.count %>회</strong>
+      <span class="summary-meta"><%= safeTodaySummary.totalMinutes %>분 · <%= safeTodaySummary.totalReps %>회 · <%= safeTodaySummary.totalDurationResultSec %>초</span>
+    </div>
+    <div class="card home-summary-card">
+      <span class="summary-label">이번 주</span>
+      <strong class="summary-value"><%= safeWeekSummary.count %>회</strong>
+      <span class="summary-meta"><%= safeWeekSummary.totalMinutes %>분 · 평균 <%= safeWeekSummary.avgScore %>점</span>
+    </div>
+    <div class="card home-summary-card">
+      <span class="summary-label">주간 반복/버티기</span>
+      <strong class="summary-value"><%= safeWeekSummary.totalReps %>회</strong>
+      <span class="summary-meta">시간형 합계 <%= safeWeekSummary.totalDurationResultSec %>초</span>
+    </div>
+  </div>
 
-    <!-- 오늘의 퀘스트 -->
+  <div class="grid three">
     <div class="card">
       <div class="card-header">
         <h3>오늘의 퀘스트</h3>
         <a href="/quest" class="ghost" style="font-size: 12px;">전체보기</a>
       </div>
-      <ul class="quest-list" id="daily-quests">
-        <% if (typeof dailyQuests !== 'undefined' && dailyQuests.length > 0) { %>
-          <% dailyQuests.slice(0, 3).forEach(quest => { %>
+      <ul class="quest-list">
+        <% if (dailyQuests && dailyQuests.length > 0) { %>
+          <% dailyQuests.slice(0, 3).forEach((quest) => { %>
             <li class="<%= quest.status === 'DONE' || quest.progress >= quest.target ? 'completed' : '' %>">
               <span><%= quest.title %></span>
               <span class="muted"><%= quest.progress %>/<%= quest.target %><%= quest.progressUnit || '' %></span>
             </li>
-          <% }); %>
+          <% }) %>
         <% } else { %>
-          <li class="empty">
-            <span class="muted">오늘의 퀘스트가 없습니다</span>
-          </li>
+          <li class="empty"><span class="muted">오늘의 퀘스트가 없습니다</span></li>
         <% } %>
       </ul>
-      <% 
-        const dailyCompleted = typeof dailyQuests !== 'undefined' 
-          ? dailyQuests.filter(q => q.status === 'DONE' || q.progress >= q.target).length 
-          : 0;
-        const dailyTotal = typeof dailyQuests !== 'undefined' ? dailyQuests.length : 0;
-        const dailyProgress = dailyTotal > 0 ? Math.round((dailyCompleted / dailyTotal) * 100) : 0;
+      <%
+        const dailyDoneCount = dailyQuests ? dailyQuests.filter((quest) => quest.status === 'DONE' || quest.progress >= quest.target).length : 0;
+        const dailyTotalCount = dailyQuests ? dailyQuests.length : 0;
+        const dailyProgressRate = dailyTotalCount > 0 ? Math.round((dailyDoneCount / dailyTotalCount) * 100) : 0;
       %>
       <div class="quest">
         <div class="progress">
-          <div class="progress-bar" style="width: <%= dailyProgress %>%"></div>
+          <div class="progress-bar" style="width: <%= dailyProgressRate %>%"></div>
         </div>
-        <span class="quest-progress">일일 퀘스트 <%= dailyCompleted %>/<%= dailyTotal %> 완료</span>
+        <span class="quest-progress">일일 퀘스트 <%= dailyDoneCount %>/<%= dailyTotalCount %> 완료</span>
       </div>
     </div>
 
-    <!-- 주간 퀘스트 -->
     <div class="card">
       <div class="card-header">
         <h3>주간 목표</h3>
       </div>
-      <ul class="quest-list" id="weekly-quests">
-        <% if (typeof weeklyQuests !== 'undefined' && weeklyQuests.length > 0) { %>
-          <% weeklyQuests.slice(0, 3).forEach(quest => { %>
+      <ul class="quest-list">
+        <% if (weeklyQuests && weeklyQuests.length > 0) { %>
+          <% weeklyQuests.slice(0, 3).forEach((quest) => { %>
             <li class="<%= quest.status === 'DONE' || quest.progress >= quest.target ? 'completed' : '' %>">
               <span><%= quest.title %></span>
               <span class="muted"><%= quest.progress %>/<%= quest.target %><%= quest.progressUnit || '' %></span>
             </li>
-          <% }); %>
+          <% }) %>
         <% } else { %>
-          <li class="empty">
-            <span class="muted">주간 퀘스트가 없습니다</span>
-          </li>
+          <li class="empty"><span class="muted">주간 퀘스트가 없습니다</span></li>
         <% } %>
       </ul>
-      <% 
-        const weeklyCompleted = typeof weeklyQuests !== 'undefined' 
-          ? weeklyQuests.filter(q => q.status === 'DONE' || q.progress >= q.target).length 
-          : 0;
-        const weeklyTotal = typeof weeklyQuests !== 'undefined' ? weeklyQuests.length : 0;
-        const weeklyProgress = weeklyTotal > 0 ? Math.round((weeklyCompleted / weeklyTotal) * 100) : 0;
+      <%
+        const weeklyDoneCount = weeklyQuests ? weeklyQuests.filter((quest) => quest.status === 'DONE' || quest.progress >= quest.target).length : 0;
+        const weeklyTotalCount = weeklyQuests ? weeklyQuests.length : 0;
+        const weeklyProgressRate = weeklyTotalCount > 0 ? Math.round((weeklyDoneCount / weeklyTotalCount) * 100) : 0;
       %>
       <div class="quest">
         <div class="progress">
-          <div class="progress-bar" style="width: <%= weeklyProgress %>%"></div>
+          <div class="progress-bar" style="width: <%= weeklyProgressRate %>%"></div>
         </div>
-        <span class="quest-progress">주간 퀘스트 <%= weeklyCompleted %>/<%= weeklyTotal %> 완료</span>
+        <span class="quest-progress">주간 퀘스트 <%= weeklyDoneCount %>/<%= weeklyTotalCount %> 완료</span>
       </div>
     </div>
-  </div>
 
-  <!-- 빠른 시작 섹션 -->
-  <div class="grid two">
-    <!-- 루틴 빠른 시작 -->
-    <div class="card">
-      <div class="card-header">
-        <h3>루틴 빠른 시작</h3>
-        <a href="/routine" class="ghost" style="font-size: 12px;">루틴 관리</a>
-      </div>
-      <% if (typeof isAuthenticated !== 'undefined' && isAuthenticated) { %>
-        <% if (typeof routines !== 'undefined' && routines.length > 0) { %>
-          <div class="pill-list" id="quick-routines">
-            <% routines.forEach(routine => { %>
-              <div class="pill" onclick="startRoutine('<%= routine.routine_id %>')">
-                <%= routine.name %>
-              </div>
-            <% }); %>
-          </div>
-        <% } else { %>
-          <p class="muted">아직 루틴이 없습니다. 새 루틴을 만들어보세요!</p>
-        <% } %>
-        <p class="card-note">
-          <a href="/routine/new">+ 새 루틴 만들기</a>
-        </p>
-      <% } else { %>
-        <p class="muted">로그인하면 나만의 루틴을 만들 수 있어요!</p>
-        <a href="/login" class="primary full">로그인하기</a>
-      <% } %>
-    </div>
-
-    <!-- 자율 운동 -->
-    <div class="card">
-      <div class="card-header">
-        <h3>자율 운동</h3>
-      </div>
-      <p class="muted">원하는 운동 하나를 선택해서 자유롭게 운동하세요</p>
-      <div class="chip-grid" id="exercise-chips">
-        <% if (typeof exercises !== 'undefined' && exercises.length > 0) { %>
-          <% exercises.forEach(exercise => { %>
-            <div class="chip" onclick="startFreeWorkout('<%= exercise.code.toLowerCase() %>')">
-              <%= exercise.name %>
-            </div>
-          <% }); %>
-        <% } else { %>
-          <p class="muted">로그인이 필요합니다</p>
-        <% } %>
-      </div>
-      <a href="/workout/free" class="ghost full" style="margin-top: 8px;">
-        전체 운동 보기 →
-      </a>
-    </div>
-  </div>
-
-  <!-- 운동 히스토리 미리보기 -->
-  <div class="grid two">
-    <!-- 출석 스트릭 -->
-    <div class="card">
-      <div class="card-header">
-        <h3>운동 출석</h3>
-        <a href="/history" class="ghost" style="font-size: 12px;">더보기</a>
-      </div>
-      <div class="streak-grid" id="streak-grid">
-        <% if (typeof activityDays !== 'undefined' && activityDays.length > 0) { %>
-          <% activityDays.forEach(day => { %>
-            <div class="streak <%= day.hasWorkout ? 'active' : '' %>" title="<%= day.date %>"></div>
-          <% }); %>
-        <% } else { %>
-          <% for (let i = 0; i < 28; i++) { %>
-            <div class="streak"></div>
-          <% } %>
-        <% } %>
-      </div>
-      <p class="muted">최근 4주간 운동 기록</p>
-    </div>
-
-    <!-- 티어 정보 -->
     <div class="card">
       <div class="card-header">
         <h3>나의 티어</h3>
       </div>
-      <% if (typeof isAuthenticated !== 'undefined' && isAuthenticated && typeof tierInfo !== 'undefined' && tierInfo) { %>
-        <div style="display: flex; align-items: center; gap: 16px;">
-          <div style="font-size: 48px;"><%= tierInfo.emoji %></div>
+      <% if (typeof isAuthenticated !== 'undefined' && isAuthenticated && tierInfo) { %>
+        <div style="display: flex; align-items: center; gap: 14px;">
+          <div style="font-size: 44px;"><%= tierInfo.emoji %></div>
           <div>
             <div style="font-weight: 700; font-size: 20px;"><%= tierInfo.name %></div>
             <% if (tierInfo.nextTierName) { %>
-              <p class="muted">다음 티어까지 <%= tierInfo.pointsToNext %>점 남음</p>
+              <p class="muted">다음 티어까지 <%= tierInfo.pointsToNext %>점</p>
             <% } else { %>
-              <p class="muted">최고 티어 달성!</p>
+              <p class="muted">최고 티어 달성</p>
             <% } %>
-            <div class="progress" style="width: 200px; margin-top: 8px;">
+            <div class="progress" style="width: 180px; margin-top: 8px;">
               <div class="progress-bar" style="width: <%= tierInfo.progress %>%"></div>
             </div>
             <p class="muted" style="font-size: 12px; margin-top: 4px;">현재 <%= tierInfo.points %>점</p>
           </div>
         </div>
       <% } else { %>
-        <p class="muted">로그인하면 티어 시스템을 이용할 수 있어요!</p>
+        <p class="muted">로그인하면 티어 시스템을 이용할 수 있어요.</p>
         <a href="/signup" class="primary">회원가입</a>
       <% } %>
     </div>
   </div>
 
-  <!-- 운동 배우기 섹션 -->
-  <div class="card">
-    <div class="card-header">
-      <h3>운동 배우기</h3>
-      <a href="/learn" class="primary">시작하기</a>
-    </div>
-    <p class="muted">정확한 자세를 배우고 부상 없이 운동하세요. 튜토리얼을 완료하면 보너스 점수를 받을 수 있어요!</p>
-    <div class="pill-list">
-      <% if (typeof exercises !== 'undefined' && exercises.length > 0) { %>
-        <% exercises.forEach(exercise => { %>
-          <span class="pill small"><%= exercise.name %> 기초</span>
-        <% }); %>
+  <div class="grid two">
+    <div class="card">
+      <div class="card-header">
+        <h3>루틴 빠른 시작</h3>
+        <a href="/routine" class="ghost" style="font-size: 12px;">루틴 관리</a>
+      </div>
+      <% if (typeof isAuthenticated !== 'undefined' && isAuthenticated) { %>
+        <% if (safeQuickRoutines.length > 0) { %>
+          <div class="quick-routine-list">
+            <% safeQuickRoutines.forEach((routine) => { %>
+              <% const stats = routine.runtime_stats || {}; %>
+              <button type="button" class="quick-routine-item" onclick="startRoutine('<%= routine.routine_id %>')">
+                <div class="quick-routine-main">
+                  <strong><%= routine.name %></strong>
+                  <span class="muted"><%= routine.step_count || 0 %>개 운동 · 완료 <%= stats.done_runs || 0 %>회</span>
+                </div>
+                <span class="quick-routine-score"><%= stats.avg_score != null ? Math.round(stats.avg_score) + '점' : '-' %></span>
+              </button>
+            <% }) %>
+          </div>
+        <% } else { %>
+          <p class="muted">아직 루틴이 없습니다. 새 루틴을 만들어보세요.</p>
+        <% } %>
+        <p class="card-note"><a href="/routine/new">+ 새 루틴 만들기</a></p>
       <% } else { %>
-        <p class="muted">운동 정보를 불러올 수 없습니다</p>
+        <p class="muted">로그인하면 나만의 루틴을 만들 수 있어요.</p>
+        <a href="/login" class="primary full">로그인하기</a>
       <% } %>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3>자율 운동</h3>
+      </div>
+      <p class="muted">운동을 선택하면 바로 세션을 시작합니다.</p>
+      <div class="chip-grid">
+        <% if (safeExercises.length > 0) { %>
+          <% safeExercises.forEach((exercise) => { %>
+            <button type="button" class="chip" onclick="startFreeWorkout('<%= exercise.code.toLowerCase() %>')">
+              <%= exercise.emoji || '🎯' %> <%= exercise.name %>
+            </button>
+          <% }) %>
+        <% } else { %>
+          <p class="muted">운동 정보를 불러올 수 없습니다.</p>
+        <% } %>
+      </div>
+      <a href="/workout/free" class="ghost full" style="margin-top: 8px;">전체 운동 보기 →</a>
+    </div>
+  </div>
+
+  <div class="grid two">
+    <div class="card">
+      <div class="card-header">
+        <h3>최근 운동 기록</h3>
+        <a href="/history" class="ghost" style="font-size: 12px;">더보기</a>
+      </div>
+      <% if (safeRecentSessions.length > 0) { %>
+        <ul class="recent-session-list">
+          <% safeRecentSessions.forEach((session) => { %>
+            <li>
+              <div>
+                <strong><%= session.exercise?.name || '운동' %></strong>
+                <p class="muted">
+                  <%= new Date(session.started_at).toLocaleDateString('ko-KR') %> ·
+                  <%= formatResultValue(session) %> ·
+                  <%= session.duration_sec %>초
+                </p>
+              </div>
+              <span class="recent-score"><%= session.final_score %>점</span>
+            </li>
+          <% }) %>
+        </ul>
+      <% } else { %>
+        <p class="muted">최근 운동 기록이 없습니다.</p>
+      <% } %>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3>운동 출석</h3>
+      </div>
+      <div class="streak-grid">
+        <% if (safeActivityDays.length > 0) { %>
+          <% safeActivityDays.forEach((day) => { %>
+            <div class="streak <%= day.hasWorkout ? 'active' : '' %>" title="<%= day.date %>"></div>
+          <% }) %>
+        <% } %>
+      </div>
+      <p class="muted">최근 4주간 운동 기록</p>
     </div>
   </div>
 </div>
 
 <style>
-.quest-list li.completed span:first-child {
-  text-decoration: line-through;
-  opacity: 0.6;
-}
+  .home-summary-grid {
+    margin-bottom: 6px;
+  }
 
-.quest-list li.completed::before {
-  content: '✓';
-  color: var(--color-success);
-  margin-right: 8px;
-  font-weight: bold;
-}
+  .home-summary-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 116px;
+    justify-content: center;
+  }
 
-.quest-list li.empty {
-  justify-content: center;
-  padding: 16px;
-}
+  .summary-label {
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-weight: 700;
+  }
 
-.streak-grid {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 4px;
-  margin-bottom: 8px;
-}
+  .summary-value {
+    font-size: 32px;
+    line-height: 1;
+  }
 
-.streak {
-  width: 100%;
-  aspect-ratio: 1;
-  min-height: 20px;
-  background: #e5e7eb;
-  border-radius: 4px;
-  transition: all 0.2s ease;
-}
+  .summary-meta {
+    font-size: 12px;
+    color: var(--muted);
+  }
 
-.streak.active {
-  background: var(--color-primary, #10b981);
-}
+  .quest-list li.completed span:first-child {
+    text-decoration: line-through;
+    opacity: 0.65;
+  }
 
-.streak:hover {
-  transform: scale(1.1);
-}
+  .quest-list li.completed::before {
+    content: '✓';
+    color: var(--color-success);
+    margin-right: 8px;
+    font-weight: bold;
+  }
+
+  .quest-list li.empty {
+    justify-content: center;
+    padding: 16px;
+  }
+
+  .quick-routine-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .quick-routine-item {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--input-bg);
+    color: var(--text);
+    padding: 10px 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+  }
+
+  .quick-routine-item:hover {
+    background: var(--ghost-hover);
+  }
+
+  .quick-routine-main {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    text-align: left;
+  }
+
+  .quick-routine-score {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--primary);
+    white-space: nowrap;
+  }
+
+  .recent-session-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .recent-session-list li {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--input-bg);
+    padding: 10px 12px;
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .recent-session-list li p {
+    margin: 4px 0 0 0;
+    font-size: 12px;
+  }
+
+  .recent-score {
+    font-weight: 700;
+    color: var(--primary);
+    white-space: nowrap;
+  }
+
+  .streak-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+
+  .streak {
+    width: 100%;
+    aspect-ratio: 1;
+    min-height: 20px;
+    background: #e5e7eb;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+  }
+
+  .streak.active {
+    background: var(--color-primary, #10b981);
+  }
+
+  .streak:hover {
+    transform: scale(1.08);
+  }
+
+  @media (max-width: 980px) {
+    .home-summary-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
 </style>
 
 <script>
-  // 루틴 시작
   function startRoutine(routineId) {
     <% if (typeof isAuthenticated !== 'undefined' && isAuthenticated) { %>
       window.location.href = `/workout/routine/${routineId}`;
@@ -269,7 +385,6 @@
     <% } %>
   }
 
-  // 자율 운동 시작
   function startFreeWorkout(exerciseCode) {
     <% if (typeof isAuthenticated !== 'undefined' && isAuthenticated) { %>
       window.location.href = `/workout/free/${exerciseCode}`;
@@ -278,4 +393,3 @@
     <% } %>
   }
 </script>
-

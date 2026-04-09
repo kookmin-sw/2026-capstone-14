@@ -1,1560 +1,246 @@
-<div class="page active">
+<%
+  const modeLabelMap = { FREE: '자율 운동', ROUTINE: '루틴 운동', LEARN: '학습 모드' };
+  const statusLabelMap = { DONE: '완료', ABORTED: '중단' };
+  const viewLabelMap = { FRONT: '정면', SIDE: '측면', DIAGONAL: '대각선' };
+
+  const formatDuration = (seconds) => {
+    const safe = Math.max(0, Number(seconds) || 0);
+    const mins = Math.floor(safe / 60);
+    const remain = safe % 60;
+    return `${mins}분 ${remain}초`;
+  };
+
+  const formatResultValue = (session) => {
+    const basis = String(session?.result_basis || '').toUpperCase();
+    const unit = String(session?.total_result_unit || '').toUpperCase();
+    const value = Math.max(0, Number(session?.total_result_value) || 0);
+    if (basis === 'REPS' || unit === 'COUNT') return `${value}회`;
+    if (basis === 'DURATION' || unit === 'SEC') return `${value}초`;
+    return `${value}`;
+  };
+
+  const scoreTier = (score, status) => {
+    if (String(status || '').toUpperCase() === 'ABORTED') return 'aborted';
+    const safe = Math.max(0, Number(score) || 0);
+    if (safe >= 85) return 'excellent';
+    if (safe >= 70) return 'good';
+    if (safe >= 50) return 'fair';
+    return 'weak';
+  };
+%>
+
+<link rel="stylesheet" href="/history-v2.css" />
+
+<div class="page active history-v2-page">
   <section class="page-header">
     <div>
       <h1>운동 히스토리</h1>
-      <p class="muted">지금까지의 운동 기록을 확인하세요</p>
+      <p class="muted">신규 DB(세션 + 스냅샷) 기준 기록 뷰</p>
     </div>
   </section>
 
-  <!-- 통계 요약 카드 -->
-  <div class="grid four">
-    <!-- 연속 운동 -->
-    <div class="card hero stat-card">
-      <div class="stat-content">
-        <span class="stat-value"><%= stats.streak %></span>
-        <span class="stat-label">일 연속</span>
-      </div>
-    </div>
-
-    <!-- 오늘 운동 -->
-    <div class="card stat-card">
-      <div class="stat-content">
-        <span class="stat-value"><%= stats.today.count %></span>
-        <span class="stat-label">회 오늘</span>
-      </div>
-      <div class="stat-sub"><%= stats.today.totalMinutes %>분 / 평균 <%= stats.today.avgScore %>점</div>
-    </div>
-
-    <!-- 이번 주 -->
-    <div class="card stat-card">
-      <div class="stat-content">
-        <span class="stat-value"><%= stats.week.days %></span>
-        <span class="stat-label">일 주간</span>
-      </div>
-      <div class="stat-sub"><%= stats.week.count %>회 / <%= stats.week.totalMinutes %>분</div>
-    </div>
-
-    <!-- 총 운동 -->
-    <div class="card stat-card">
-      <div class="stat-content">
-        <span class="stat-value"><%= stats.total %></span>
-        <span class="stat-label">회 총합</span>
-      </div>
-      <% if (stats.best) { %>
-        <div class="stat-sub">최고 <%= stats.best.final_score %>점 (<%= stats.best.exercise?.name %>)</div>
+  <section class="history-overview-grid">
+    <article class="card overview-card">
+      <span class="overview-label">연속 운동</span>
+      <strong class="overview-value"><%= stats.overview.streak %>일</strong>
+      <span class="overview-meta">기록 유지 중</span>
+    </article>
+    <article class="card overview-card">
+      <span class="overview-label">최근 30일</span>
+      <strong class="overview-value"><%= stats.recent30.count %>회</strong>
+      <span class="overview-meta"><%= stats.recent30.totalMinutes %>분 · 평균 <%= stats.recent30.avgScore %>점</span>
+    </article>
+    <article class="card overview-card">
+      <span class="overview-label">오늘</span>
+      <strong class="overview-value"><%= stats.today.count %>회</strong>
+      <span class="overview-meta"><%= stats.today.totalMinutes %>분 · <%= stats.today.totalReps %>회</span>
+    </article>
+    <article class="card overview-card">
+      <span class="overview-label">이번 주</span>
+      <strong class="overview-value"><%= stats.week.count %>회</strong>
+      <span class="overview-meta"><%= stats.week.totalMinutes %>분 · 평균 <%= stats.week.avgScore %>점</span>
+    </article>
+    <article class="card overview-card">
+      <span class="overview-label">누적 세션</span>
+      <strong class="overview-value"><%= stats.overview.doneCount %>회</strong>
+      <span class="overview-meta">중단 <%= stats.overview.abortedCount %>회</span>
+    </article>
+    <article class="card overview-card">
+      <span class="overview-label">최고 점수</span>
+      <% if (stats.overview.best) { %>
+        <strong class="overview-value"><%= Math.round(stats.overview.best.final_score || 0) %>점</strong>
+        <span class="overview-meta"><%= stats.overview.best.exercise?.name || '운동' %></span>
+      <% } else { %>
+        <strong class="overview-value">-</strong>
+        <span class="overview-meta">기록 없음</span>
       <% } %>
-    </div>
-  </div>
+    </article>
+  </section>
 
   <section class="card insight-panel">
     <div class="insight-header">
       <div>
         <h2 class="insight-title">기록 인사이트</h2>
-        <p class="muted">최근 기록의 추이와 운동별 분포를 확인하세요</p>
+        <p class="muted">일별 추이와 운동별 분포</p>
       </div>
-      <div class="range-switch" role="group" aria-label="통계 기간 선택">
+      <div class="range-switch" role="group" aria-label="기간 선택">
         <button type="button" class="range-btn" data-range="7">7일</button>
         <button type="button" class="range-btn active" data-range="30">30일</button>
         <button type="button" class="range-btn" data-range="90">90일</button>
       </div>
     </div>
 
-    <div class="insight-metrics" id="insightMetrics">
-      <div class="insight-metric">
-        <span class="metric-name">운동 횟수</span>
-        <strong class="metric-value">-</strong>
-        <span class="metric-note">최근 30일</span>
-      </div>
-      <div class="insight-metric">
-        <span class="metric-name">총 운동 시간</span>
-        <strong class="metric-value">-</strong>
-        <span class="metric-note">분 단위 합계</span>
-      </div>
-      <div class="insight-metric">
-        <span class="metric-name">평균 점수</span>
-        <strong class="metric-value">-</strong>
-        <span class="metric-note">세션 평균</span>
-      </div>
-      <div class="insight-metric">
-        <span class="metric-name">활동일</span>
-        <strong class="metric-value">-</strong>
-        <span class="metric-note">일관성 지표</span>
-      </div>
-      <div class="insight-metric">
-        <span class="metric-name">분당 반복</span>
-        <strong class="metric-value">-</strong>
-        <span class="metric-note">전체 기준</span>
-      </div>
-    </div>
-
+    <div class="insight-metrics" id="insightMetrics"></div>
     <div class="insight-charts">
       <div class="chart-panel">
         <div class="chart-header-row">
           <h3>평균 점수 추이</h3>
-          <span id="scoreTrendHint" class="trend-hint">계산 중...</span>
+          <span id="scoreTrendHint" class="trend-hint">집계 중...</span>
         </div>
-        <div class="chart-wrap" id="scoreChart" aria-live="polite">데이터를 불러오는 중...</div>
+        <div id="scoreChart" class="chart-wrap" aria-live="polite"></div>
       </div>
-
       <div class="chart-panel">
         <div class="chart-header-row">
           <h3>운동 시간 추이</h3>
-          <span id="timeTrendHint" class="trend-hint">계산 중...</span>
+          <span id="timeTrendHint" class="trend-hint">집계 중...</span>
         </div>
-        <div class="chart-wrap" id="timeChart" aria-live="polite">데이터를 불러오는 중...</div>
+        <div id="timeChart" class="chart-wrap" aria-live="polite"></div>
       </div>
     </div>
-
     <div class="exercise-breakdown">
-      <div class="chart-header-row">
-        <h3>운동별 분포</h3>
-      </div>
-      <div class="exercise-breakdown-list" id="exerciseBreakdown">데이터를 불러오는 중...</div>
+      <div class="chart-header-row"><h3>운동별 분포</h3></div>
+      <div class="exercise-breakdown-list" id="exerciseBreakdown"></div>
     </div>
   </section>
 
-  <!-- 필터 -->
-  <div class="filter-bar">
+  <section class="card filter-card">
     <form method="GET" action="/history" class="filter-form">
       <div class="filter-group">
-        <label>운동</label>
-        <select name="exercise" onchange="this.form.submit()">
-          <option value="all">전체 운동</option>
-          <% exercises.forEach(ex => { %>
-            <option value="<%= ex.exercise_id %>" <%= filters.exercise === ex.exercise_id ? 'selected' : '' %>>
-              <%= ex.name %>
+        <label for="historyExercise">운동</label>
+        <select id="historyExercise" name="exercise" onchange="this.form.submit()">
+          <option value="all">전체</option>
+          <% exercises.forEach((exercise) => { %>
+            <option value="<%= exercise.exercise_id %>" <%= String(exercise.exercise_id) === String(filters.exercise) ? 'selected' : '' %>>
+              <%= exercise.name %>
             </option>
           <% }) %>
         </select>
       </div>
       <div class="filter-group">
-        <label>기간</label>
-        <select name="period" onchange="this.form.submit()">
-          <option value="all" <%= !filters.period || filters.period === 'all' ? 'selected' : '' %>>전체</option>
+        <label for="historyPeriod">기간</label>
+        <select id="historyPeriod" name="period" onchange="this.form.submit()">
+          <option value="all" <%= filters.period === 'all' ? 'selected' : '' %>>전체</option>
           <option value="today" <%= filters.period === 'today' ? 'selected' : '' %>>오늘</option>
           <option value="week" <%= filters.period === 'week' ? 'selected' : '' %>>이번 주</option>
           <option value="month" <%= filters.period === 'month' ? 'selected' : '' %>>이번 달</option>
+          <option value="90d" <%= filters.period === '90d' ? 'selected' : '' %>>최근 90일</option>
         </select>
       </div>
       <div class="filter-group">
-        <label>정렬</label>
-        <select name="sort" onchange="this.form.submit()">
-          <option value="date" <%= !filters.sort || filters.sort === 'date' ? 'selected' : '' %>>최신순</option>
-          <option value="score" <%= filters.sort === 'score' ? 'selected' : '' %>>점수순</option>
-          <option value="duration" <%= filters.sort === 'duration' ? 'selected' : '' %>>시간순</option>
+        <label for="historyStatus">상태</label>
+        <select id="historyStatus" name="status" onchange="this.form.submit()">
+          <option value="DONE" <%= filters.status === 'DONE' ? 'selected' : '' %>>완료</option>
+          <option value="ABORTED" <%= filters.status === 'ABORTED' ? 'selected' : '' %>>중단</option>
+          <option value="ALL" <%= filters.status === 'ALL' ? 'selected' : '' %>>전체</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label for="historySort">정렬</label>
+        <select id="historySort" name="sort" onchange="this.form.submit()">
+          <option value="latest" <%= filters.sort === 'latest' ? 'selected' : '' %>>최신순</option>
+          <option value="oldest" <%= filters.sort === 'oldest' ? 'selected' : '' %>>오래된순</option>
+          <option value="score" <%= filters.sort === 'score' ? 'selected' : '' %>>점수 높은순</option>
         </select>
       </div>
     </form>
-  </div>
+  </section>
 
-  <!-- 운동 기록 목록 -->
-  <div class="history-list">
-    <% if (sessions.length === 0) { %>
-      <div class="empty-state">
-        <div class="empty-icon">없음</div>
-        <h3>운동 기록이 없습니다</h3>
-        <p class="muted">운동을 시작해서 기록을 만들어보세요!</p>
+  <section class="history-list-section">
+    <% if (!sessions || sessions.length === 0) { %>
+      <div class="card empty-state">
+        <h3>조건에 맞는 기록이 없습니다</h3>
+        <p class="muted">필터를 바꾸거나 새 운동을 시작해보세요.</p>
         <div class="empty-actions">
-          <a href="/workout/free" class="primary">자율 운동 시작</a>
-          <a href="/routine" class="ghost">루틴 보기</a>
+          <a class="primary" href="/workout/free">자율 운동 시작</a>
+          <a class="ghost" href="/routine">루틴 보러가기</a>
         </div>
       </div>
     <% } else { %>
-      <% sessions.forEach(session => { %>
-        <div class="history-item" data-session-id="<%= session.session_id %>">
-          <div class="history-date">
-            <span class="date-full"><%= new Date(session.started_at).getMonth() + 1 %>월 <%= new Date(session.started_at).getDate() %>일</span>
-            <span class="date-time">
-              <%= new Date(session.started_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) %>
-            </span>
-          </div>
-          
-          <div class="history-content">
-            <div class="history-header">
+      <div class="history-list">
+        <% sessions.forEach((session) => { %>
+          <article class="card history-row <%= String(session.status || '').toUpperCase() === 'ABORTED' ? 'is-aborted' : '' %>" data-session-id="<%= session.session_id %>">
+            <div class="history-row-main">
+              <div class="history-row-top">
+                <span class="history-date">
+                  <%= new Date(session.started_at).toLocaleDateString('ko-KR', { year: 'numeric', month: 'short', day: 'numeric' }) %>
+                  <span class="history-time"><%= new Date(session.started_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) %></span>
+                </span>
+                <div class="history-badges">
+                  <span class="badge mode"><%= modeLabelMap[session.mode] || session.mode || '-' %></span>
+                  <span class="badge status <%= String(session.status || '').toLowerCase() %>"><%= statusLabelMap[session.status] || session.status || '-' %></span>
+                  <span class="badge view"><%= viewLabelMap[session.selected_view] || session.selected_view || '-' %></span>
+                </div>
+              </div>
               <h3 class="history-title"><%= session.exercise?.name || '운동' %></h3>
-              <span class="history-mode <%= session.mode.toLowerCase() %>">
-                <%= session.mode === 'ROUTINE' ? '루틴' : '자율' %>
-              </span>
+              <div class="history-facts">
+                <span class="fact-chip">결과 <strong><%= formatResultValue(session) %></strong></span>
+                <span class="fact-chip">운동 시간 <strong><%= formatDuration(session.duration_sec) %></strong></span>
+                <% if (session.final_snapshot) { %>
+                  <span class="fact-chip">FINAL #<strong><%= session.final_snapshot.snapshot_no %></strong></span>
+                <% } %>
+              </div>
+              <% if (session.summary_feedback) { %>
+                <p class="history-feedback"><%= session.summary_feedback %></p>
+              <% } %>
             </div>
-            <div class="history-stats">
-              <span class="history-stat">
-                <% 
-                  const mins = Math.floor((session.duration_sec || 0) / 60);
-                  const secs = (session.duration_sec || 0) % 60;
-                  const sessionDurationMinutes = (session.duration_sec || 0) / 60;
-                  const pace = sessionDurationMinutes > 0 ? Math.round((session.total_reps || 0) / sessionDurationMinutes) : 0;
-                %>
-                <%= mins %>분 <%= secs %>초
-              </span>
-              <span class="history-stat">
-                <%= session.total_reps || 0 %>회
-              </span>
-              <span class="history-stat">
-                분당 <%= pace %>회
-              </span>
-            </div>
-            <% if (session.summary_feedback) { %>
-              <p class="history-feedback"><%= session.summary_feedback %></p>
-            <% } %>
-          </div>
-
-          <div class="history-score">
-            <div class="score-circle <%= session.final_score >= 80 ? 'excellent' : session.final_score >= 60 ? 'good' : 'needs-work' %>">
-              <span class="score-value"><%= session.final_score || 0 %></span>
-              <span class="score-label">점</span>
-            </div>
-          </div>
-
-          <div class="history-actions">
-            <button class="ghost small" onclick="viewDetail('<%= session.session_id %>')">상세</button>
-            <button class="danger small" onclick="deleteSession('<%= session.session_id %>')">삭제</button>
-          </div>
-        </div>
-      <% }) %>
-
-      <!-- 페이지네이션 -->
-      <% if (pagination.totalPages > 1) { %>
-        <div class="pagination">
-          <% if (pagination.page > 1) { %>
-            <a href="?page=<%= pagination.page - 1 %>&exercise=<%= filters.exercise || 'all' %>&period=<%= filters.period || 'all' %>&sort=<%= filters.sort || 'date' %>" class="page-btn">
-              ← 이전
-            </a>
-          <% } %>
-          
-          <span class="page-info">
-            <%= pagination.page %> / <%= pagination.totalPages %> 페이지
-            <span class="muted">(총 <%= pagination.total %>개)</span>
-          </span>
-          
-          <% if (pagination.page < pagination.totalPages) { %>
-            <a href="?page=<%= pagination.page + 1 %>&exercise=<%= filters.exercise || 'all' %>&period=<%= filters.period || 'all' %>&sort=<%= filters.sort || 'date' %>" class="page-btn">
-              다음 →
-            </a>
-          <% } %>
-        </div>
-      <% } %>
-    <% } %>
-  </div>
-</div>
-
-<!-- 상세 모달 -->
-<div class="modal" id="detailModal" hidden>
-  <div class="modal-content large">
-    <div class="modal-header">
-      <h2 id="modalTitle">운동 상세</h2>
-      <button class="icon" onclick="closeModal()">✕</button>
-    </div>
-    <div class="modal-body" id="modalBody">
-      <div class="loading">로딩 중...</div>
-    </div>
-  </div>
-</div>
-
-<style>
-  .grid.four {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
-  }
-
-  .stat-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    padding: 20px;
-  }
-
-  .stat-card.hero {
-    color: white;
-  }
-
-  .stat-content {
-    display: flex;
-    align-items: baseline;
-    gap: 4px;
-  }
-
-  .stat-value {
-    font-size: 32px;
-    font-weight: 700;
-  }
-
-  .stat-label {
-    font-size: 14px;
-    opacity: 0.8;
-  }
-
-  .stat-sub {
-    font-size: 12px;
-    opacity: 0.7;
-    margin-top: 8px;
-  }
-
-  .hero .stat-sub {
-    color: rgba(255, 255, 255, 0.8);
-  }
-
-  .insight-panel {
-    gap: 18px;
-  }
-
-  .insight-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    flex-wrap: wrap;
-    gap: 14px;
-  }
-
-  .insight-title {
-    margin: 0 0 6px 0;
-    font-size: 22px;
-  }
-
-  .range-switch {
-    display: flex;
-    gap: 8px;
-    padding: 6px;
-    border-radius: 999px;
-    background: var(--input-bg);
-    border: 1px solid var(--border);
-  }
-
-  .range-btn {
-    border: none;
-    border-radius: 999px;
-    padding: 7px 13px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--muted);
-    background: transparent;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .range-btn:hover {
-    background: var(--ghost-hover);
-  }
-
-  .range-btn.active {
-    background: var(--primary);
-    color: #fff;
-  }
-
-  .insight-metrics {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 12px;
-  }
-
-  .insight-metric {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 12px;
-    border-radius: 12px;
-    border: 1px solid var(--border);
-    background: var(--input-bg);
-  }
-
-  .insight-metric .metric-name {
-    font-size: 12px;
-    color: var(--muted);
-  }
-
-  .insight-metric .metric-value {
-    font-size: 22px;
-    line-height: 1.1;
-  }
-
-  .insight-metric .metric-note {
-    font-size: 11px;
-    color: var(--muted);
-  }
-
-  .insight-charts {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 14px;
-  }
-
-  .chart-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .chart-header-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .chart-header-row h3 {
-    margin: 0;
-    font-size: 16px;
-  }
-
-  .trend-hint {
-    font-size: 12px;
-    color: var(--muted);
-  }
-
-  .trend-hint.up {
-    color: #16a34a;
-    font-weight: 600;
-  }
-
-  .trend-hint.down {
-    color: var(--danger);
-    font-weight: 600;
-  }
-
-  .chart-wrap {
-    min-height: 240px;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    background: var(--input-bg);
-    padding: 12px;
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-
-  .chart-empty {
-    display: grid;
-    place-items: center;
-    min-height: 210px;
-    color: var(--muted);
-    font-size: 13px;
-    text-align: center;
-  }
-
-  .mini-bar-chart {
-    height: 216px;
-    display: flex;
-    align-items: end;
-    gap: 6px;
-    min-width: max-content;
-    padding-bottom: 2px;
-  }
-
-  .mini-bar-item {
-    width: 18px;
-    flex: 0 0 18px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-  }
-
-  .mini-bar-wrap {
-    width: 100%;
-    height: 140px;
-    display: flex;
-    align-items: flex-end;
-    justify-content: center;
-    border-radius: 8px;
-    background: rgba(100, 116, 139, 0.08);
-    padding: 4px;
-  }
-
-  .mini-bar {
-    width: 100%;
-    border-radius: 6px 6px 4px 4px;
-    background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
-  }
-
-  #timeChart .mini-bar {
-    background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
-  }
-
-  .mini-bar-label {
-    font-size: 10px;
-    color: var(--muted);
-    line-height: 1;
-    white-space: nowrap;
-    min-height: 10px;
-  }
-
-  .exercise-breakdown {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .exercise-breakdown-list {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .exercise-row {
-    border: 1px solid var(--border);
-    background: var(--input-bg);
-    border-radius: 10px;
-    padding: 10px 12px;
-  }
-
-  .exercise-row-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-bottom: 8px;
-  }
-
-  .exercise-name {
-    font-size: 14px;
-    font-weight: 600;
-  }
-
-  .exercise-summary {
-    font-size: 12px;
-    color: var(--muted);
-  }
-
-  .exercise-track {
-    height: 8px;
-    border-radius: 999px;
-    background: var(--border);
-    overflow: hidden;
-  }
-
-  .exercise-fill {
-    display: block;
-    height: 100%;
-    border-radius: 999px;
-    background: linear-gradient(90deg, #3b82f6 0%, #14b8a6 100%);
-  }
-
-  /* 필터 바 */
-  .filter-bar {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 16px;
-    margin: 24px 0;
-  }
-
-  .filter-form {
-    display: flex;
-    gap: 24px;
-    flex-wrap: wrap;
-  }
-
-  .filter-group {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .filter-group label {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--muted);
-  }
-
-  .filter-group select {
-    padding: 8px 12px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--input-bg);
-    color: var(--text);
-    font-size: 14px;
-  }
-
-  /* 히스토리 목록 */
-  .history-list {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .history-item {
-    display: grid;
-    grid-template-columns: 80px 1fr auto auto;
-    gap: 20px;
-    align-items: center;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 20px;
-    transition: all 0.2s ease;
-  }
-
-  .history-item:hover {
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
-    transform: translateY(-2px);
-  }
-
-  .history-date {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-  }
-
-  .date-full {
-    font-size: 15px;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-
-  .date-time {
-    font-size: 12px;
-    color: var(--muted);
-    margin-top: 4px;
-  }
-
-  .history-content {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .history-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .history-title {
-    margin: 0;
-    font-size: 18px;
-  }
-
-  .history-mode {
-    padding: 4px 10px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 600;
-  }
-
-  .history-mode.free {
-    background: rgba(59, 130, 246, 0.15);
-    color: #3b82f6;
-  }
-
-  .history-mode.routine {
-    background: rgba(139, 92, 246, 0.15);
-    color: #8b5cf6;
-  }
-
-  .history-stats {
-    display: flex;
-    gap: 16px;
-    flex-wrap: wrap;
-  }
-
-  .history-stat {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 14px;
-    color: var(--muted);
-  }
-
-  .history-feedback {
-    margin: 0;
-    font-size: 13px;
-    color: var(--muted);
-  }
-
-  .history-score {
-    display: flex;
-    justify-content: center;
-  }
-
-  .score-circle {
-    width: 70px;
-    height: 70px;
-    border-radius: 50%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    background: var(--input-bg);
-  }
-
-  .score-circle.excellent {
-    background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-    color: white;
-  }
-
-  .score-circle.good {
-    background: linear-gradient(135deg, #eab308 0%, #ca8a04 100%);
-    color: white;
-  }
-
-  .score-circle.needs-work {
-    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-    color: white;
-  }
-
-  .score-value {
-    font-size: 22px;
-    font-weight: 700;
-    line-height: 1;
-  }
-
-  .score-label {
-    font-size: 11px;
-    opacity: 0.9;
-  }
-
-  .history-actions {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .history-actions button {
-    padding: 8px 16px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: transparent;
-    font-size: 13px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .history-actions .ghost:hover {
-    background: var(--ghost-hover);
-  }
-
-  .history-actions .danger {
-    color: var(--danger);
-    border-color: rgba(255, 92, 109, 0.3);
-  }
-
-  .history-actions .danger:hover {
-    background: rgba(255, 92, 109, 0.1);
-  }
-
-  /* 빈 상태 */
-  .empty-state {
-    text-align: center;
-    padding: 60px 20px;
-    background: var(--card);
-    border: 2px dashed var(--border);
-    border-radius: 16px;
-  }
-
-  .empty-icon {
-    font-size: 48px;
-    margin-bottom: 16px;
-  }
-
-  .empty-state h3 {
-    margin: 0 0 8px 0;
-  }
-
-  .empty-actions {
-    display: flex;
-    gap: 12px;
-    justify-content: center;
-    margin-top: 24px;
-  }
-
-  /* 페이지네이션 */
-  .pagination {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 24px;
-    margin-top: 24px;
-    padding: 16px;
-  }
-
-  .page-btn {
-    padding: 10px 20px;
-    border-radius: 8px;
-    background: var(--primary);
-    color: white;
-    font-weight: 500;
-    text-decoration: none;
-    transition: all 0.2s ease;
-  }
-
-  .page-btn:hover {
-    background: var(--primary-dark);
-    text-decoration: none;
-  }
-
-  .page-info {
-    font-size: 14px;
-  }
-
-  /* 모달 */
-  .modal-content.large {
-    width: min(760px, 92%);
-    max-height: 80vh;
-    overflow-y: auto;
-  }
-
-  .detail-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
-    margin-bottom: 18px;
-  }
-
-  .detail-item {
-    background: var(--input-bg);
-    border: 1px solid var(--border);
-    padding: 14px;
-    border-radius: 12px;
-  }
-
-  .detail-item label {
-    display: block;
-    font-size: 12px;
-    color: var(--muted);
-    margin-bottom: 4px;
-  }
-
-  .detail-item .value {
-    font-size: 15px;
-    font-weight: 600;
-    line-height: 1.4;
-    word-break: break-word;
-  }
-
-  .detail-section {
-    margin-top: 18px;
-  }
-
-  .detail-section h4 {
-    margin: 0 0 10px 0;
-    font-size: 15px;
-  }
-
-  .detail-feedback {
-    margin: 0;
-    background: var(--input-bg);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 12px;
-    font-size: 13px;
-    line-height: 1.55;
-  }
-
-  .metric-list {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .metric-item-detail {
-    background: var(--input-bg);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 10px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .metric-head {
-    display: flex;
-    justify-content: space-between;
-    gap: 10px;
-    font-size: 13px;
-  }
-
-  .metric-meta {
-    color: var(--muted);
-    font-size: 12px;
-  }
-
-  .metric-score {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .metric-bar-track {
-    flex: 1;
-    background: var(--border);
-    border-radius: 999px;
-    height: 8px;
-    overflow: hidden;
-  }
-
-  .metric-bar-fill {
-    display: block;
-    height: 100%;
-    border-radius: 999px;
-    background: linear-gradient(90deg, #3b82f6 0%, #22c55e 100%);
-  }
-
-  .set-list {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .set-item {
-    border: 1px solid var(--border);
-    background: var(--input-bg);
-    border-radius: 10px;
-    padding: 10px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .set-main {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .set-no {
-    font-size: 13px;
-    font-weight: 600;
-  }
-
-  .set-phase {
-    font-size: 11px;
-    font-weight: 700;
-    border-radius: 999px;
-    padding: 4px 8px;
-  }
-
-  .set-phase.work {
-    background: rgba(34, 197, 94, 0.15);
-    color: #16a34a;
-  }
-
-  .set-phase.rest {
-    background: rgba(59, 130, 246, 0.15);
-    color: #2563eb;
-  }
-
-  .set-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    font-size: 12px;
-    color: var(--muted);
-  }
-
-  .detail-extra-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-  }
-
-  .detail-extra-item {
-    background: var(--input-bg);
-    border: 1px dashed var(--border);
-    border-radius: 8px;
-    padding: 10px;
-  }
-
-  .detail-extra-item label {
-    display: block;
-    margin-bottom: 4px;
-    font-size: 11px;
-    color: var(--muted);
-  }
-
-  .detail-extra-item .value {
-    font-size: 13px;
-    font-weight: 600;
-    word-break: break-word;
-  }
-
-  .error {
-    margin: 0;
-    background: rgba(255, 92, 109, 0.1);
-    border: 1px solid rgba(255, 92, 109, 0.25);
-    color: var(--danger);
-    border-radius: 8px;
-    padding: 12px 14px;
-  }
-
-  .loading {
-    text-align: center;
-    padding: 40px;
-    color: var(--muted);
-  }
-
-  @media (max-width: 900px) {
-    .grid.four {
-      grid-template-columns: repeat(2, 1fr);
-    }
-
-    .insight-metrics {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-
-    .insight-charts {
-      grid-template-columns: 1fr;
-    }
-
-    .history-item {
-      grid-template-columns: 60px 1fr;
-      gap: 16px;
-    }
-
-    .history-score,
-    .history-actions {
-      grid-column: span 2;
-      flex-direction: row;
-      justify-content: space-between;
-    }
-
-    .detail-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-  }
-
-  @media (max-width: 600px) {
-    .grid.four {
-      grid-template-columns: 1fr 1fr;
-    }
-
-    .insight-metrics {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .range-switch {
-      width: 100%;
-      justify-content: space-between;
-    }
-
-    .range-btn {
-      flex: 1;
-      text-align: center;
-    }
-
-    .filter-form {
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    .filter-group {
-      width: 100%;
-    }
-
-    .filter-group select {
-      flex: 1;
-    }
-
-    .detail-grid,
-    .detail-extra-grid {
-      grid-template-columns: 1fr;
-    }
-  }
-</style>
-
-<script>
-  const insightState = { days: 30 };
-
-  function escapeHtml(value) {
-    return String(value ?? '').replace(/[&<>"']/g, (char) => ({
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;'
-    }[char]));
-  }
-
-  function formatNumber(value) {
-    return new Intl.NumberFormat('ko-KR').format(Number(value) || 0);
-  }
-
-  function formatDuration(sec) {
-    const totalSec = Math.max(0, Number(sec) || 0);
-    const mins = Math.floor(totalSec / 60);
-    const remain = totalSec % 60;
-    return `${mins}분 ${remain}초`;
-  }
-
-  function toDateKey(date) {
-    return date.toISOString().split('T')[0];
-  }
-
-  function toDateLabel(dateKey) {
-    const [_, month, day] = String(dateKey).split('-');
-    return `${Number(month)}/${Number(day)}`;
-  }
-
-  function average(numbers) {
-    if (!numbers.length) return 0;
-    return numbers.reduce((sum, num) => sum + num, 0) / numbers.length;
-  }
-
-  function setRangeActive(days) {
-    document.querySelectorAll('.range-btn').forEach((button) => {
-      button.classList.toggle('active', Number(button.dataset.range) === days);
-    });
-  }
-
-  function setInsightLoading(message) {
-    const html = `<div class="chart-empty">${escapeHtml(message)}</div>`;
-    document.getElementById('scoreChart').innerHTML = html;
-    document.getElementById('timeChart').innerHTML = html;
-    document.getElementById('exerciseBreakdown').innerHTML = html;
-  }
-
-  function normalizeDaily(rawDaily, days) {
-    const byDate = new Map((rawDaily || []).map((day) => [day.date, day]));
-    const rows = [];
-
-    for (let i = days - 1; i >= 0; i -= 1) {
-      const date = new Date();
-      date.setHours(0, 0, 0, 0);
-      date.setDate(date.getDate() - i);
-      const key = toDateKey(date);
-      const day = byDate.get(key);
-
-      rows.push({
-        date: key,
-        count: Number(day?.count || 0),
-        totalMinutes: Number(day?.totalMinutes || 0),
-        totalReps: Number(day?.totalReps || 0),
-        avgScore: Number(day?.avgScore || 0),
-        bestScore: Number(day?.bestScore || 0)
-      });
-    }
-
-    return rows;
-  }
-
-  function buildSummary(daily, days) {
-    const totalSessions = daily.reduce((sum, day) => sum + day.count, 0);
-    const totalMinutes = daily.reduce((sum, day) => sum + day.totalMinutes, 0);
-    const totalReps = daily.reduce((sum, day) => sum + day.totalReps, 0);
-    const activeDays = daily.filter((day) => day.count > 0).length;
-    const weightedScore = daily.reduce((sum, day) => sum + (day.avgScore * day.count), 0);
-    const avgScore = totalSessions ? Math.round(weightedScore / totalSessions) : 0;
-    const repsPerMin = totalMinutes ? (totalReps / totalMinutes).toFixed(1) : '0.0';
-    const consistency = Math.round((activeDays / Math.max(days, 1)) * 100);
-    const avgMinutesPerSession = totalSessions ? (totalMinutes / totalSessions).toFixed(1) : '0.0';
-    const bestDay = daily.reduce((best, day) => (day.bestScore > best.bestScore ? day : best), { bestScore: 0, date: '-' });
-
-    const half = Math.max(1, Math.floor(days / 2));
-    const prevScoreSamples = daily.slice(0, half).filter((day) => day.count > 0).map((day) => day.avgScore);
-    const recentScoreSamples = daily.slice(-half).filter((day) => day.count > 0).map((day) => day.avgScore);
-    const prevScore = average(prevScoreSamples);
-    const recentScore = average(recentScoreSamples);
-    const scoreDelta = prevScoreSamples.length && recentScoreSamples.length
-      ? Number((recentScore - prevScore).toFixed(1))
-      : null;
-
-    const prevMinutes = average(daily.slice(0, half).map((day) => day.totalMinutes));
-    const recentMinutes = average(daily.slice(-half).map((day) => day.totalMinutes));
-    const minuteDelta = prevMinutes > 0
-      ? Number((((recentMinutes - prevMinutes) / prevMinutes) * 100).toFixed(1))
-      : null;
-
-    return {
-      days,
-      totalSessions,
-      totalMinutes,
-      totalReps,
-      avgScore,
-      repsPerMin,
-      activeDays,
-      consistency,
-      avgMinutesPerSession,
-      bestDay,
-      avgMinutesPerDay: Number(average(daily.map((day) => day.totalMinutes)).toFixed(1)),
-      scoreDelta,
-      minuteDelta
-    };
-  }
-
-  function renderTrendHint(elementId, value, suffix) {
-    const element = document.getElementById(elementId);
-    if (!element) return;
-    element.className = 'trend-hint';
-
-    if (value === null || Number.isNaN(value)) {
-      element.textContent = '비교 데이터 부족';
-      return;
-    }
-
-    if (value > 0.1) {
-      element.classList.add('up');
-      element.textContent = `이전 구간 대비 +${value}${suffix}`;
-      return;
-    }
-
-    if (value < -0.1) {
-      element.classList.add('down');
-      element.textContent = `이전 구간 대비 ${value}${suffix}`;
-      return;
-    }
-
-    element.classList.add('flat');
-    element.textContent = '큰 변화 없음';
-  }
-
-  function renderInsightMetrics(summary) {
-    const metricItems = [
-      { name: '운동 횟수', value: `${formatNumber(summary.totalSessions)}회`, note: `최근 ${summary.days}일` },
-      { name: '총 운동 시간', value: `${formatNumber(summary.totalMinutes)}분`, note: `회당 평균 ${summary.avgMinutesPerSession}분` },
-      {
-        name: '평균 점수',
-        value: `${formatNumber(summary.avgScore)}점`,
-        note: summary.bestDay.bestScore ? `최고 ${summary.bestDay.bestScore}점 (${toDateLabel(summary.bestDay.date)})` : '점수 데이터 없음'
-      },
-      { name: '활동일', value: `${formatNumber(summary.activeDays)}일`, note: `일관성 ${summary.consistency}%` },
-      { name: '분당 반복', value: `${summary.repsPerMin}회`, note: `총 반복 ${formatNumber(summary.totalReps)}회` }
-    ];
-
-    document.getElementById('insightMetrics').innerHTML = metricItems.map((item) => `
-      <div class="insight-metric">
-        <span class="metric-name">${escapeHtml(item.name)}</span>
-        <strong class="metric-value">${escapeHtml(item.value)}</strong>
-        <span class="metric-note">${escapeHtml(item.note)}</span>
-      </div>
-    `).join('');
-  }
-
-  function renderMiniBarChart(targetId, source, key, maxValue, suffix) {
-    const container = document.getElementById(targetId);
-    if (!container) return;
-
-    const hasData = source.some((row) => Number(row[key] || 0) > 0);
-    if (!hasData) {
-      container.innerHTML = '<div class="chart-empty">아직 기록이 없습니다.</div>';
-      return;
-    }
-
-    const labelStep = source.length > 60 ? 10 : source.length > 30 ? 7 : source.length > 14 ? 4 : 1;
-    const rows = source.map((row, index) => {
-      const value = Number(row[key] || 0);
-      const height = Math.max(6, Math.round((value / Math.max(maxValue, 1)) * 100));
-      const showLabel = index % labelStep === 0 || index === source.length - 1;
-      return `
-        <div class="mini-bar-item">
-          <div class="mini-bar-wrap" title="${value}${suffix}">
-            <span class="mini-bar" style="height:${height}%"></span>
-          </div>
-          <div class="mini-bar-label">${showLabel ? toDateLabel(row.date) : ''}</div>
-        </div>
-      `;
-    }).join('');
-
-    container.innerHTML = `<div class="mini-bar-chart">${rows}</div>`;
-  }
-
-  function renderExerciseBreakdown(exercises) {
-    const container = document.getElementById('exerciseBreakdown');
-    if (!container) return;
-
-    if (!exercises || !exercises.length) {
-      container.innerHTML = '<div class="chart-empty">운동 분포 데이터가 없습니다.</div>';
-      return;
-    }
-
-    const topExercises = exercises.slice(0, 6);
-    const maxCount = Math.max(...topExercises.map((exercise) => Number(exercise.count || 0)), 1);
-
-    container.innerHTML = topExercises.map((exercise) => {
-      const count = Number(exercise.count || 0);
-      const width = ((count / maxCount) * 100).toFixed(1);
-      const summary = `${formatNumber(count)}회 · ${formatNumber(exercise.totalMinutes || 0)}분 · 평균 ${formatNumber(exercise.avgScore || 0)}점`;
-      return `
-        <div class="exercise-row">
-          <div class="exercise-row-header">
-            <span class="exercise-name">${escapeHtml(exercise.name || '기타')}</span>
-            <span class="exercise-summary">${escapeHtml(summary)}</span>
-          </div>
-          <div class="exercise-track">
-            <span class="exercise-fill" style="width:${width}%"></span>
-          </div>
-        </div>
-      `;
-    }).join('');
-  }
-
-  async function loadHistoryInsights(days = insightState.days) {
-    insightState.days = days;
-    setRangeActive(days);
-    setInsightLoading('데이터를 불러오는 중...');
-
-    try {
-      const response = await fetch(`/api/history/stats?days=${days}`);
-      const payload = await response.json();
-
-      if (!response.ok || payload.error) {
-        throw new Error(payload.error || '통계 조회 실패');
-      }
-
-      const daily = normalizeDaily(payload.daily, days);
-      const summary = buildSummary(daily, days);
-
-      renderInsightMetrics(summary);
-      renderMiniBarChart(
-        'scoreChart',
-        daily,
-        'avgScore',
-        100,
-        '점'
-      );
-      renderMiniBarChart(
-        'timeChart',
-        daily,
-        'totalMinutes',
-        Math.max(...daily.map((row) => row.totalMinutes), 10),
-        '분'
-      );
-      renderExerciseBreakdown(payload.exercises || []);
-      renderTrendHint('scoreTrendHint', summary.scoreDelta, '점');
-      renderTrendHint('timeTrendHint', summary.minuteDelta, '%');
-    } catch (error) {
-      console.error('History insight error:', error);
-      setInsightLoading('통계 데이터를 불러오지 못했습니다.');
-      renderTrendHint('scoreTrendHint', null, '점');
-      renderTrendHint('timeTrendHint', null, '%');
-    }
-  }
-
-  function extractDetailEntries(detail) {
-    if (!detail || typeof detail !== 'object' || Array.isArray(detail)) {
-      return [];
-    }
-
-    return Object.entries(detail)
-      .filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value))
-      .slice(0, 8);
-  }
-
-  // 상세 보기
-  async function viewDetail(sessionId) {
-    const modal = document.getElementById('detailModal');
-    const modalBody = document.getElementById('modalBody');
-    
-    modal.hidden = false;
-    modalBody.innerHTML = '<div class="loading">로딩 중...</div>';
-
-    try {
-      const response = await fetch(`/api/history/${sessionId}`);
-      const session = await response.json();
-
-      if (!response.ok || session.error) {
-        modalBody.innerHTML = `<p class="error">${escapeHtml(session.error || '세션 정보를 불러오지 못했습니다.')}</p>`;
-        return;
-      }
-
-      const durationSec = Number(session.duration_sec || 0);
-      const totalReps = Number(session.total_reps || 0);
-      const pace = durationSec > 0 ? Math.round(totalReps / (durationSec / 60)) : 0;
-      const startText = session.started_at ? new Date(session.started_at).toLocaleString('ko-KR') : '-';
-      const endText = session.ended_at ? new Date(session.ended_at).toLocaleString('ko-KR') : '-';
-
-      const metricRows = (session.session_metric_result || []).map((result) => {
-        const title = escapeHtml(result.metric?.title || '항목');
-        const score = Number(result.score || 0);
-        const raw = result.raw === null || typeof result.raw === 'undefined'
-          ? '-'
-          : `${escapeHtml(String(result.raw))}${result.metric?.unit ? ` ${escapeHtml(result.metric.unit)}` : ''}`;
-        const width = Math.min(100, Math.max(0, score));
-
-        return `
-          <div class="metric-item-detail">
-            <div class="metric-head">
-              <span>${title}</span>
-              <span class="metric-meta">원시값 ${raw}</span>
-            </div>
-            <div class="metric-score">
-              <strong>${formatNumber(score)}점</strong>
-              <div class="metric-bar-track">
-                <span class="metric-bar-fill" style="width:${width}%"></span>
+            <div class="history-row-score">
+              <div class="score-bubble <%= scoreTier(session.final_score, session.status) %>">
+                <strong><%= String(session.status || '').toUpperCase() === 'ABORTED' ? '-' : Math.round(session.final_score || 0) %></strong>
+                <span>점수</span>
               </div>
             </div>
-          </div>
-        `;
-      }).join('');
-
-      const metricsHtml = metricRows
-        ? `
-          <section class="detail-section">
-            <h4>세부 점수</h4>
-            <div class="metric-list">${metricRows}</div>
-          </section>
-        `
-        : '';
-
-      const sets = Array.isArray(session.workout_sets) ? [...session.workout_sets] : [];
-      sets.sort((a, b) => (Number(a.set_no || 0) - Number(b.set_no || 0))
-        || String(a.phase || '').localeCompare(String(b.phase || ''), 'ko'));
-
-      const setRows = sets.map((set) => {
-        const phase = set.phase === 'REST' ? '휴식' : '운동';
-        const phaseClass = set.phase === 'REST' ? 'rest' : 'work';
-        const targetReps = set.target_reps === null || typeof set.target_reps === 'undefined'
-          ? '-'
-          : `${formatNumber(set.target_reps)}회`;
-        const actualReps = set.actual_reps === null || typeof set.actual_reps === 'undefined'
-          ? '-'
-          : `${formatNumber(set.actual_reps)}회`;
-
-        return `
-          <div class="set-item">
-            <div class="set-main">
-              <span class="set-no">${formatNumber(set.set_no || 0)}세트</span>
-              <span class="set-phase ${phaseClass}">${phase}</span>
+            <div class="history-row-actions">
+              <button type="button" class="ghost small" onclick="viewDetail('<%= session.session_id %>')">상세</button>
+              <% if (String(session.status || '').toUpperCase() === 'DONE') { %>
+                <a class="ghost small link-btn" href="/workout/result/<%= session.session_id %>">결과</a>
+              <% } %>
+              <button type="button" class="danger small" onclick="deleteSession('<%= session.session_id %>')">삭제</button>
             </div>
-            <div class="set-meta">
-              <span>목표 ${targetReps}</span>
-              <span>수행 ${actualReps}</span>
-              <span>지속 ${formatDuration(set.duration_sec || 0)}</span>
-            </div>
-          </div>
-        `;
-      }).join('');
+          </article>
+        <% }) %>
+      </div>
 
-      const setsHtml = setRows
-        ? `
-          <section class="detail-section">
-            <h4>세트 기록</h4>
-            <div class="set-list">${setRows}</div>
-          </section>
-        `
-        : '';
+      <% if (pagination.totalPages > 1) { %>
+        <nav class="pagination" aria-label="페이지 이동">
+          <% if (pagination.page > 1) { %>
+            <a class="page-btn" href="?page=<%= pagination.page - 1 %>&exercise=<%= filters.exercise %>&period=<%= filters.period %>&status=<%= filters.status %>&sort=<%= filters.sort %>">이전</a>
+          <% } %>
+          <span class="page-info"><%= pagination.page %> / <%= pagination.totalPages %> · 총 <%= pagination.total %>개</span>
+          <% if (pagination.page < pagination.totalPages) { %>
+            <a class="page-btn" href="?page=<%= pagination.page + 1 %>&exercise=<%= filters.exercise %>&period=<%= filters.period %>&status=<%= filters.status %>&sort=<%= filters.sort %>">다음</a>
+          <% } %>
+        </nav>
+      <% } %>
+    <% } %>
+  </section>
+</div>
 
-      const detailEntries = extractDetailEntries(session.detail);
-      const detailHtml = detailEntries.length
-        ? `
-          <section class="detail-section">
-            <h4>세션 데이터</h4>
-            <div class="detail-extra-grid">
-              ${detailEntries.map(([key, value]) => `
-                <div class="detail-extra-item">
-                  <label>${escapeHtml(String(key).replace(/_/g, ' '))}</label>
-                  <div class="value">${escapeHtml(String(value))}</div>
-                </div>
-              `).join('')}
-            </div>
-          </section>
-        `
-        : '';
+<div class="modal" id="detailModal" hidden>
+  <div class="modal-content history-detail-modal">
+    <div class="modal-header">
+      <h2 id="detailModalTitle">세션 상세</h2>
+      <button type="button" class="icon" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body" id="detailModalBody">
+      <div class="loading-state">불러오는 중...</div>
+    </div>
+  </div>
+</div>
 
-      modalBody.innerHTML = `
-        <div class="detail-grid">
-          <div class="detail-item">
-            <label>운동</label>
-            <div class="value">${escapeHtml(session.exercise?.name || '운동')}</div>
-          </div>
-          <div class="detail-item">
-            <label>모드</label>
-            <div class="value">${session.mode === 'ROUTINE' ? '루틴' : '자율'}</div>
-          </div>
-          <div class="detail-item">
-            <label>최종 점수</label>
-            <div class="value" style="color: var(--primary);">${formatNumber(session.final_score || 0)}점</div>
-          </div>
-          <div class="detail-item">
-            <label>운동 시간</label>
-            <div class="value">${formatDuration(durationSec)}</div>
-          </div>
-          <div class="detail-item">
-            <label>총 반복</label>
-            <div class="value">${formatNumber(totalReps)}회</div>
-          </div>
-          <div class="detail-item">
-            <label>시작 시간</label>
-            <div class="value">${escapeHtml(startText)}</div>
-          </div>
-          <div class="detail-item">
-            <label>종료 시간</label>
-            <div class="value">${escapeHtml(endText)}</div>
-          </div>
-          <div class="detail-item">
-            <label>분당 반복</label>
-            <div class="value">${formatNumber(pace)}회</div>
-          </div>
-        </div>
-
-        ${session.summary_feedback ? `
-          <section class="detail-section">
-            <h4>요약 피드백</h4>
-            <p class="detail-feedback">${escapeHtml(session.summary_feedback).replace(/\n/g, '<br>')}</p>
-          </section>
-        ` : ''}
-        ${metricsHtml}
-        ${setsHtml}
-        ${detailHtml}
-      `;
-    } catch (error) {
-      console.error('Detail fetch error:', error);
-      modalBody.innerHTML = '<p class="error">데이터를 불러올 수 없습니다.</p>';
-    }
-  }
-
-  // 모달 닫기
-  function closeModal() {
-    document.getElementById('detailModal').hidden = true;
-  }
-
-  // 세션 삭제
-  async function deleteSession(sessionId) {
-    if (!confirm('이 운동 기록을 삭제하시겠습니까?\n삭제된 기록은 복구할 수 없습니다.')) {
-      return;
-    }
-
-    try {
-      const response = await fetch(`/api/history/${sessionId}`, {
-        method: 'DELETE'
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        // 해당 항목 제거
-        const item = document.querySelector(`[data-session-id="${sessionId}"]`);
-        if (item) {
-          item.style.opacity = '0';
-          item.style.transform = 'translateX(-20px)';
-          setTimeout(() => item.remove(), 300);
-        }
-        loadHistoryInsights(insightState.days);
-      } else {
-        alert(result.error || '삭제 중 오류가 발생했습니다.');
-      }
-    } catch (error) {
-      console.error('Delete error:', error);
-      alert('네트워크 오류가 발생했습니다.');
-    }
-  }
-
-  // 모달 외부 클릭 시 닫기
-  const detailModal = document.getElementById('detailModal');
-  if (detailModal) {
-    detailModal.addEventListener('click', (e) => {
-      if (e.target.classList.contains('modal')) {
-        closeModal();
-      }
-    });
-  }
-
-  // ESC 키로 모달 닫기
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      closeModal();
-    }
-  });
-
-  document.querySelectorAll('.range-btn').forEach((button) => {
-    button.addEventListener('click', () => {
-      const days = Number(button.dataset.range);
-      if (!Number.isFinite(days) || days === insightState.days) return;
-      loadHistoryInsights(days);
-    });
-  });
-
-  loadHistoryInsights(insightState.days);
+<script>
+  window.__HISTORY_BOOTSTRAP__ = {
+    initialDays: 30
+  };
 </script>
+<script src="/js/history-page.js"></script>
+

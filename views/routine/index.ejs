@@ -1,24 +1,38 @@
+<%
+  const modeLabel = (targetType, targetValue) => {
+    const safeValue = Math.max(0, Number(targetValue) || 0);
+    return targetType === 'TIME' ? `${safeValue}초` : `${safeValue}회`;
+  };
+
+  const statusLabelMap = {
+    RUNNING: '진행 중',
+    DONE: '완료',
+    ABORTED: '중단'
+  };
+%>
+
 <div class="page active">
   <section class="page-header">
     <div>
       <h1>나의 루틴</h1>
-      <p class="muted">나만의 운동 루틴을 만들고 관리하세요</p>
+      <p class="muted">루틴 템플릿과 실행 이력을 함께 관리합니다</p>
     </div>
     <div class="actions">
       <a href="/routine/new" class="primary">+ 새 루틴 만들기</a>
     </div>
   </section>
 
-  <% if (routines.length === 0) { %>
+  <% if (!routines || routines.length === 0) { %>
     <div class="card" style="text-align: center; padding: 48px;">
       <h3>아직 루틴이 없어요</h3>
-      <p class="muted">나만의 운동 루틴을 만들어보세요!</p>
+      <p class="muted">운동 단계를 구성해 나만의 루틴을 만들어보세요.</p>
       <a href="/routine/new" class="primary" style="margin-top: 16px;">첫 루틴 만들기</a>
     </div>
   <% } else { %>
     <div class="grid two">
-      <% routines.forEach(routine => { %>
-        <div class="card" data-routine-id="<%= routine.routine_id %>">
+      <% routines.forEach((routine) => { %>
+        <% const stats = routine.runtime_stats || {}; %>
+        <div class="card routine-card" data-routine-id="<%= routine.routine_id %>">
           <div class="card-header">
             <h3><%= routine.name %></h3>
             <div class="card-actions">
@@ -26,35 +40,56 @@
               <button class="danger" onclick="deleteRoutine('<%= routine.routine_id %>')" title="삭제">삭제</button>
             </div>
           </div>
-          
+
+          <div class="routine-meta">
+            <span class="meta-pill">운동 <strong><%= routine.total_steps || 0 %>개</strong></span>
+            <span class="meta-pill">총 세트 <strong><%= routine.total_sets || 0 %>세트</strong></span>
+            <span class="meta-pill">실행 <strong><%= stats.total_runs || 0 %>회</strong></span>
+            <span class="meta-pill">완료 <strong><%= stats.done_runs || 0 %>회</strong></span>
+          </div>
+
+          <div class="routine-stats-grid">
+            <div class="stat-item">
+              <label>평균 점수</label>
+              <div class="value"><%= stats.avg_score != null ? Math.round(stats.avg_score) + '점' : '-' %></div>
+            </div>
+            <div class="stat-item">
+              <label>최고 점수</label>
+              <div class="value"><%= stats.best_score != null ? Math.round(stats.best_score) + '점' : '-' %></div>
+            </div>
+            <div class="stat-item">
+              <label>최근 실행</label>
+              <div class="value"><%= stats.last_run_at ? new Date(stats.last_run_at).toLocaleDateString('ko-KR') : '-' %></div>
+            </div>
+            <div class="stat-item">
+              <label>최근 상태</label>
+              <div class="value"><%= statusLabelMap[stats.last_status] || '-' %></div>
+            </div>
+          </div>
+
           <ul class="routine-list">
-            <% routine.routine_setup.sort((a, b) => a.order_no - b.order_no).forEach(step => { %>
+            <% routine.routine_setup.forEach((step) => { %>
               <li>
-                <strong><%= step.exercise ? step.exercise.name : '알 수 없는 운동' %></strong>
-                <% if (step.target_type === 'REPS') { %>
-                  <%= step.target_value %>회 × <%= step.sets %>세트
-                <% } else { %>
-                  <%= step.target_value %>초 × <%= step.sets %>세트
-                <% } %>
-                <% if (step.rest_sec > 0) { %>
-                  (휴식 <%= step.rest_sec %>초)
-                <% } %>
+                <strong><%= step.exercise?.name || '알 수 없는 운동' %></strong>
+                <span>
+                  <%= modeLabel(step.target_type, step.target_value) %> × <%= Math.max(1, Number(step.sets) || 1) %>세트
+                  <% if ((Number(step.rest_sec) || 0) > 0) { %>
+                    (휴식 <%= Number(step.rest_sec) %>초)
+                  <% } %>
+                </span>
               </li>
-            <% }); %>
+            <% }) %>
           </ul>
 
           <div class="card-actions" style="margin-top: auto;">
-            <a href="/workout/routine/<%= routine.routine_id %>" class="primary full">
-              운동 시작
-            </a>
+            <a href="/workout/routine/<%= routine.routine_id %>" class="primary full">운동 시작</a>
           </div>
         </div>
-      <% }); %>
+      <% }) %>
     </div>
   <% } %>
 </div>
 
-<!-- 삭제 확인 모달 -->
 <div class="modal" id="deleteModal" hidden>
   <div class="modal-content">
     <div class="modal-header">
@@ -71,6 +106,94 @@
     </div>
   </div>
 </div>
+
+<style>
+  .routine-card {
+    gap: 12px;
+  }
+
+  .routine-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .meta-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--input-bg);
+  }
+
+  .meta-pill strong {
+    color: var(--text);
+  }
+
+  .routine-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .stat-item {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--input-bg);
+    padding: 10px 12px;
+  }
+
+  .stat-item label {
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 5px;
+  }
+
+  .stat-item .value {
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .routine-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    margin: 0;
+    padding: 0;
+  }
+
+  .routine-list li {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--input-bg);
+    padding: 9px 11px;
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .routine-list li strong {
+    font-size: 14px;
+  }
+
+  .routine-list li span {
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  @media (max-width: 760px) {
+    .routine-stats-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
 
 <script>
   let routineToDelete = null;
@@ -94,23 +217,23 @@
         headers: { 'Content-Type': 'application/json' }
       });
 
-      if (response.ok) {
-        // 해당 카드 제거
-        const card = document.querySelector(`[data-routine-id="${routineToDelete}"]`);
-        if (card) card.remove();
-        closeDeleteModal();
-        
-        // 루틴이 없으면 페이지 새로고침
-        if (document.querySelectorAll('[data-routine-id]').length === 0) {
-          location.reload();
-        }
-      } else {
-        const data = await response.json();
-        alert(data.error || '삭제에 실패했습니다.');
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.success) {
+        alert(payload.error || '삭제에 실패했습니다.');
+        return;
+      }
+
+      const card = document.querySelector(`[data-routine-id="${routineToDelete}"]`);
+      if (card) card.remove();
+      closeDeleteModal();
+
+      if (document.querySelectorAll('[data-routine-id]').length === 0) {
+        location.reload();
       }
     } catch (error) {
-      console.error('Delete error:', error);
-      alert('삭제에 실패했습니다.');
+      console.error('Delete routine failed:', error);
+      alert('삭제 중 오류가 발생했습니다.');
     }
   });
 </script>
+

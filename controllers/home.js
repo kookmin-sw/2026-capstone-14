@@ -1,115 +1,173 @@
 const { supabase } = require('../config/db');
 const { buildQuestCardModel, refreshAllActiveQuestProgress } = require('./quest');
 
-// 오늘 날짜 범위
+const RESULT_BASIS_CODES = ['REPS', 'DURATION'];
+const RESULT_UNIT_CODES = ['COUNT', 'SEC'];
+const ROUTINE_INSTANCE_STATUSES = ['RUNNING', 'DONE', 'ABORTED'];
+
+const normalizeResultBasis = (value) => {
+    const basis = String(value || '').trim().toUpperCase();
+    return RESULT_BASIS_CODES.includes(basis) ? basis : null;
+};
+
+const normalizeResultUnit = (value) => {
+    const unit = String(value || '').trim().toUpperCase();
+    return RESULT_UNIT_CODES.includes(unit) ? unit : null;
+};
+
+const toSafeInt = (value, fallback = 0) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(0, Math.round(parsed));
+};
+
+const clampScore = (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.max(0, Math.min(100, Math.round(parsed)));
+};
+
+const computeDurationSecFromRange = (startedAtIso, endedAtIso = new Date().toISOString()) => {
+    const startMs = new Date(startedAtIso).getTime();
+    const endMs = new Date(endedAtIso).getTime();
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return 0;
+    return Math.max(0, Math.round((endMs - startMs) / 1000));
+};
+
+const pad2 = (value) => String(value).padStart(2, '0');
+const toLocalDateKey = (date) => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+
+const parseDateKey = (dateKey) => {
+    const [year, month, day] = String(dateKey).split('-').map((v) => Number(v));
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+        return null;
+    }
+    return new Date(year, month - 1, day);
+};
+
 const getTodayRange = () => {
     const now = new Date();
     const start = new Date(now);
     start.setHours(0, 0, 0, 0);
-    
+
     const end = new Date(now);
     end.setHours(23, 59, 59, 999);
-    
+
     return { start, end };
 };
 
-// 주간 범위 (월요일~일요일)
 const getWeekRange = () => {
     const now = new Date();
     const dayOfWeek = now.getDay();
     const monday = new Date(now);
     monday.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
     monday.setHours(0, 0, 0, 0);
-    
+
     const sunday = new Date(monday);
     sunday.setDate(monday.getDate() + 6);
     sunday.setHours(23, 59, 59, 999);
-    
+
     return { start: monday, end: sunday };
 };
 
-const getSessionDurationSec = (session) => {
-    const startedAt = session?.started_at ? new Date(session.started_at) : null;
-    const endedAt = session?.ended_at ? new Date(session.ended_at) : null;
+const normalizeSessionResult = (session) => {
+    const basis = normalizeResultBasis(session?.result_basis) || 'REPS';
+    const unit = normalizeResultUnit(session?.total_result_unit) || (basis === 'REPS' ? 'COUNT' : 'SEC');
+    const resultValue = toSafeInt(session?.total_result_value, 0);
+    const durationSec = computeDurationSecFromRange(session?.started_at, session?.ended_at || new Date().toISOString());
+    const totalReps = basis === 'REPS' || unit === 'COUNT' ? resultValue : 0;
+    const totalDurationResultSec = basis === 'DURATION' || unit === 'SEC' ? resultValue : 0;
 
-    if (startedAt && endedAt) {
-        return Math.max(0, Math.round((endedAt.getTime() - startedAt.getTime()) / 1000));
-    }
-
-    return 0;
+    return {
+        ...session,
+        result_basis: basis,
+        total_result_unit: unit,
+        total_result_value: resultValue,
+        duration_sec: durationSec,
+        total_reps: totalReps,
+        total_duration_result_sec: totalDurationResultSec,
+        final_score: clampScore(session?.final_score)
+    };
 };
 
-// 한국 날짜 형식
+const aggregateSessionSummary = (sessions = []) => {
+    const normalized = sessions.map((session) => normalizeSessionResult(session));
+    const count = normalized.length;
+    const totalMinutes = Math.round(normalized.reduce((sum, row) => sum + (row.duration_sec || 0), 0) / 60);
+    const totalReps = normalized.reduce((sum, row) => sum + (row.total_reps || 0), 0);
+    const totalDurationResultSec = normalized.reduce((sum, row) => sum + (row.total_duration_result_sec || 0), 0);
+    const avgScore = count > 0
+        ? Math.round(normalized.reduce((sum, row) => sum + (row.final_score || 0), 0) / count)
+        : 0;
+
+    return {
+        count,
+        totalMinutes,
+        totalReps,
+        totalDurationResultSec,
+        avgScore
+    };
+};
+
 const formatKoreanDate = () => {
     const now = new Date();
     return `${now.getFullYear()}년 ${now.getMonth() + 1}월 ${now.getDate()}일`;
 };
 
-// 연속 운동일 계산
 const calculateStreak = async (userId) => {
     try {
-        // 최근 60일간의 운동 세션 날짜 가져오기
-        const sixtyDaysAgo = new Date();
-        sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-        
+        const lookback = new Date();
+        lookback.setDate(lookback.getDate() - 365);
+
         const { data: sessions, error } = await supabase
             .from('workout_session')
             .select('started_at')
             .eq('user_id', userId)
-            .not('ended_at', 'is', null)
-            .gte('started_at', sixtyDaysAgo.toISOString())
+            .eq('status', 'DONE')
+            .gte('started_at', lookback.toISOString())
             .order('started_at', { ascending: false });
-        
-        if (error || !sessions || sessions.length === 0) {
-            return 0;
-        }
-        
-        // 운동한 날짜들 (중복 제거)
-        const workoutDates = new Set();
-        sessions.forEach(session => {
+
+        if (error || !sessions?.length) return 0;
+
+        const uniqueKeys = [];
+        const seen = new Set();
+        for (const session of sessions) {
             const date = new Date(session.started_at);
-            const dateStr = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-            workoutDates.add(dateStr);
-        });
-        
-        // 어제부터 연속일 계산
-        let streak = 0;
+            if (Number.isNaN(date.getTime())) continue;
+            const key = toLocalDateKey(date);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            uniqueKeys.push(key);
+        }
+
+        if (!uniqueKeys.length) return 0;
+
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        
-        // 오늘 운동했는지 확인
-        const todayStr = `${today.getFullYear()}-${today.getMonth()}-${today.getDate()}`;
-        if (workoutDates.has(todayStr)) {
-            streak = 1;
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+
+        const first = uniqueKeys[0];
+        const firstDate = parseDateKey(first);
+        if (!firstDate) return 0;
+        if (toLocalDateKey(firstDate) !== toLocalDateKey(today) && toLocalDateKey(firstDate) !== toLocalDateKey(yesterday)) {
+            return 0;
         }
-        
-        // 과거로 거슬러 올라가며 연속일 확인
-        const checkDate = new Date(today);
-        if (!workoutDates.has(todayStr)) {
-            checkDate.setDate(checkDate.getDate() - 1);
-        }
-        
-        for (let i = 0; i < 60; i++) {
-            if (streak === 0 && !workoutDates.has(todayStr)) {
-                // 오늘 운동 안했으면 어제부터 시작
-                const yesterdayStr = `${checkDate.getFullYear()}-${checkDate.getMonth()}-${checkDate.getDate()}`;
-                if (workoutDates.has(yesterdayStr)) {
-                    streak = 1;
-                    checkDate.setDate(checkDate.getDate() - 1);
-                } else {
-                    break;
-                }
+
+        let streak = 1;
+        for (let i = 1; i < uniqueKeys.length; i += 1) {
+            const prevDate = parseDateKey(uniqueKeys[i - 1]);
+            const currDate = parseDateKey(uniqueKeys[i]);
+            if (!prevDate || !currDate) break;
+
+            const diffDays = Math.round((prevDate - currDate) / 86400000);
+            if (diffDays === 1) {
+                streak += 1;
             } else {
-                checkDate.setDate(checkDate.getDate() - 1);
-                const dateStr = `${checkDate.getFullYear()}-${checkDate.getMonth()}-${checkDate.getDate()}`;
-                if (workoutDates.has(dateStr)) {
-                    streak++;
-                } else {
-                    break;
-                }
+                break;
             }
         }
-        
+
         return streak;
     } catch (error) {
         console.error('Streak calculation error:', error);
@@ -117,47 +175,206 @@ const calculateStreak = async (userId) => {
     }
 };
 
-// 최근 28일 운동 기록 (출석 그리드용)
 const getLast28DaysActivity = async (userId) => {
     try {
-        const twentyEightDaysAgo = new Date();
-        twentyEightDaysAgo.setDate(twentyEightDaysAgo.getDate() - 27);
-        twentyEightDaysAgo.setHours(0, 0, 0, 0);
-        
+        const start = new Date();
+        start.setDate(start.getDate() - 27);
+        start.setHours(0, 0, 0, 0);
+
         const { data: sessions, error } = await supabase
             .from('workout_session')
             .select('started_at')
             .eq('user_id', userId)
-            .not('ended_at', 'is', null)
-            .gte('started_at', twentyEightDaysAgo.toISOString());
-        
+            .eq('status', 'DONE')
+            .gte('started_at', start.toISOString());
         if (error) throw error;
-        
-        // 운동한 날짜들 셋
-        const workoutDates = new Set();
-        sessions?.forEach(session => {
-            const date = new Date(session.started_at);
-            const dateStr = date.toISOString().split('T')[0];
-            workoutDates.add(dateStr);
+
+        const activeSet = new Set();
+        (sessions || []).forEach((session) => {
+            const startedAt = new Date(session.started_at);
+            if (Number.isNaN(startedAt.getTime())) return;
+            activeSet.add(toLocalDateKey(startedAt));
         });
-        
-        // 28일 배열 생성
+
         const days = [];
-        for (let i = 27; i >= 0; i--) {
+        for (let i = 27; i >= 0; i -= 1) {
             const date = new Date();
+            date.setHours(0, 0, 0, 0);
             date.setDate(date.getDate() - i);
-            const dateStr = date.toISOString().split('T')[0];
+            const key = toLocalDateKey(date);
             days.push({
-                date: dateStr,
-                hasWorkout: workoutDates.has(dateStr)
+                date: key,
+                hasWorkout: activeSet.has(key)
             });
         }
-        
+
         return days;
     } catch (error) {
         console.error('Activity fetch error:', error);
-        return Array(28).fill({ date: '', hasWorkout: false });
+        const fallback = [];
+        for (let i = 27; i >= 0; i -= 1) {
+            const date = new Date();
+            date.setHours(0, 0, 0, 0);
+            date.setDate(date.getDate() - i);
+            fallback.push({ date: toLocalDateKey(date), hasWorkout: false });
+        }
+        return fallback;
     }
+};
+
+const buildRoutineStatsById = (instances = [], routineIds = []) => {
+    const statsById = new Map(
+        routineIds.map((routineId) => [routineId, {
+            total_runs: 0,
+            done_runs: 0,
+            aborted_runs: 0,
+            running_runs: 0,
+            avg_score: null,
+            best_score: null,
+            last_run_at: null,
+            last_status: null
+        }])
+    );
+
+    for (const instance of instances) {
+        const routineId = instance.routine_id;
+        if (!statsById.has(routineId)) continue;
+
+        const stats = statsById.get(routineId);
+        const status = String(instance.status || '').toUpperCase();
+        const score = Number(instance.total_score);
+        const runAt = instance.ended_at || instance.started_at || null;
+
+        stats.total_runs += 1;
+        if (status === 'DONE') stats.done_runs += 1;
+        if (status === 'ABORTED') stats.aborted_runs += 1;
+        if (status === 'RUNNING') stats.running_runs += 1;
+
+        if (runAt) {
+            const currentLast = stats.last_run_at ? new Date(stats.last_run_at).getTime() : 0;
+            const incoming = new Date(runAt).getTime();
+            if (!Number.isNaN(incoming) && incoming > currentLast) {
+                stats.last_run_at = runAt;
+                stats.last_status = status;
+            }
+        }
+
+        if (status === 'DONE' && Number.isFinite(score)) {
+            if (!Array.isArray(stats._scores)) stats._scores = [];
+            stats._scores.push(score);
+            stats.best_score = stats.best_score == null ? score : Math.max(stats.best_score, score);
+        }
+    }
+
+    for (const stats of statsById.values()) {
+        const scores = Array.isArray(stats._scores) ? stats._scores : [];
+        stats.avg_score = scores.length > 0
+            ? Math.round((scores.reduce((sum, score) => sum + score, 0) / scores.length) * 100) / 100
+            : null;
+        delete stats._scores;
+    }
+
+    return statsById;
+};
+
+const enrichQuickRoutines = async (userId, routines = []) => {
+    const routineIds = routines.map((routine) => routine.routine_id);
+    if (!routineIds.length) return [];
+
+    const { data: instances, error } = await supabase
+        .from('routine_instance')
+        .select('routine_instance_id, routine_id, status, started_at, ended_at, total_score')
+        .eq('user_id', userId)
+        .in('routine_id', routineIds)
+        .in('status', ROUTINE_INSTANCE_STATUSES)
+        .order('started_at', { ascending: false });
+    if (error) throw error;
+
+    const statsById = buildRoutineStatsById(instances || [], routineIds);
+
+    return routines.map((routine) => ({
+        ...routine,
+        step_count: Array.isArray(routine.routine_setup) ? routine.routine_setup.length : 0,
+        runtime_stats: statsById.get(routine.routine_id) || {
+            total_runs: 0,
+            done_runs: 0,
+            aborted_runs: 0,
+            running_runs: 0,
+            avg_score: null,
+            best_score: null,
+            last_run_at: null,
+            last_status: null
+        }
+    }));
+};
+
+const getTierInfo = (pointsRows = [], tierRulesRows = []) => {
+    const totalPoints = (pointsRows || []).reduce((sum, row) => sum + (Number(row.points) || 0), 0);
+
+    const fallbackTiers = [
+        { tier: 1, min_points: 0, name: '브론즈', emoji: '🥉' },
+        { tier: 2, min_points: 300, name: '실버', emoji: '🥈' },
+        { tier: 3, min_points: 1000, name: '골드', emoji: '🥇' },
+        { tier: 4, min_points: 3000, name: '플래티넘', emoji: '💎' },
+        { tier: 5, min_points: 10000, name: '다이아몬드', emoji: '👑' }
+    ];
+
+    const emojiByName = {
+        브론즈: '🥉',
+        실버: '🥈',
+        골드: '🥇',
+        플래티넘: '💎',
+        다이아몬드: '👑'
+    };
+
+    const effectiveRules = (tierRulesRows || []).length > 0
+        ? tierRulesRows.map((rule) => ({
+            ...rule,
+            emoji: emojiByName[rule.name] || '🏆'
+        }))
+        : fallbackTiers;
+
+    let currentTier = effectiveRules[0];
+    let nextTier = null;
+
+    for (let i = effectiveRules.length - 1; i >= 0; i -= 1) {
+        if (totalPoints >= (Number(effectiveRules[i].min_points) || 0)) {
+            currentTier = effectiveRules[i];
+            nextTier = i < effectiveRules.length - 1 ? effectiveRules[i + 1] : null;
+            break;
+        }
+    }
+
+    const currentMin = Number(currentTier.min_points) || 0;
+    const nextMin = nextTier ? Number(nextTier.min_points) || currentMin : currentMin;
+    const progress = nextTier
+        ? Math.min(100, Math.round(((totalPoints - currentMin) / Math.max(1, nextMin - currentMin)) * 100))
+        : 100;
+
+    return {
+        name: currentTier.name,
+        emoji: currentTier.emoji || '🏆',
+        points: totalPoints,
+        nextTierName: nextTier?.name || null,
+        pointsToNext: nextTier ? Math.max(0, nextMin - totalPoints) : 0,
+        progress
+    };
+};
+
+const getExerciseEmoji = (code) => {
+    const normalized = String(code || '').trim().toLowerCase();
+    const map = {
+        squat: '🏋️',
+        push_up: '💪',
+        pushup: '💪',
+        lunge: '🦵',
+        plank: '🧘',
+        burpee: '🔥',
+        deadlift: '🏋️',
+        shoulder_press: '🏐',
+        bicep_curl: '💪'
+    };
+    return map[normalized] || '🎯';
 };
 
 // 홈페이지 렌더링 (로그인 사용자용)
@@ -165,59 +382,86 @@ const getHomePage = async (req, res, next) => {
     try {
         const isAuthenticated = res.locals.isAuthenticated;
         const user = res.locals.user;
-        
-        // 비로그인 사용자
+
         if (!isAuthenticated || !user) {
             return res.render('home', {
                 title: 'Home',
                 today: formatKoreanDate(),
                 activeTab: 'home',
                 streak: 0,
-                todayMinutes: 0,
+                todaySummary: { count: 0, totalMinutes: 0, totalReps: 0, totalDurationResultSec: 0, avgScore: 0 },
+                weekSummary: { count: 0, totalMinutes: 0, totalReps: 0, totalDurationResultSec: 0, avgScore: 0 },
                 dailyQuests: [],
                 weeklyQuests: [],
+                quickRoutines: [],
                 routines: [],
                 exercises: [],
-                activityDays: Array(28).fill({ date: '', hasWorkout: false }),
+                recentSessions: [],
+                activityDays: Array.from({ length: 28 }).map(() => ({ date: '', hasWorkout: false })),
                 tierInfo: null
             });
         }
-        
+
         const userId = user.user_id;
         try {
             await refreshAllActiveQuestProgress(userId);
         } catch (questSyncError) {
             console.error('Home quest progress sync error:', questSyncError);
         }
-        const today = getTodayRange();
-        const week = getWeekRange();
-        
-        // 병렬로 데이터 가져오기
+
+        const todayRange = getTodayRange();
+        const weekRange = getWeekRange();
+
         const [
-            streakResult,
+            streak,
+            activityDays,
             todaySessionsResult,
+            weekSessionsResult,
+            recentSessionsResult,
             dailyQuestsResult,
             weeklyQuestsResult,
             routinesResult,
             exercisesResult,
             pointsResult,
-            tierRulesResult,
-            activityDays
+            tierRulesResult
         ] = await Promise.all([
-            // 연속 운동일
             calculateStreak(userId),
-            
-            // 오늘 운동 세션
+            getLast28DaysActivity(userId),
             supabase
                 .from('workout_session')
-                .select('started_at, ended_at, final_score, status')
+                .select('session_id, started_at, ended_at, final_score, result_basis, total_result_value, total_result_unit')
                 .eq('user_id', userId)
                 .eq('status', 'DONE')
-                .not('ended_at', 'is', null)
-                .gte('started_at', today.start.toISOString())
-                .lte('started_at', today.end.toISOString()),
-            
-            // 오늘의 퀘스트 (일일) - period_start/end로 오늘 날짜 포함 확인
+                .gte('started_at', todayRange.start.toISOString())
+                .lte('started_at', todayRange.end.toISOString()),
+            supabase
+                .from('workout_session')
+                .select('session_id, started_at, ended_at, final_score, result_basis, total_result_value, total_result_unit')
+                .eq('user_id', userId)
+                .eq('status', 'DONE')
+                .gte('started_at', weekRange.start.toISOString())
+                .lte('started_at', weekRange.end.toISOString()),
+            supabase
+                .from('workout_session')
+                .select(`
+                    session_id,
+                    started_at,
+                    ended_at,
+                    final_score,
+                    result_basis,
+                    total_result_value,
+                    total_result_unit,
+                    selected_view,
+                    exercise:exercise_id (
+                        exercise_id,
+                        code,
+                        name
+                    )
+                `)
+                .eq('user_id', userId)
+                .eq('status', 'DONE')
+                .order('started_at', { ascending: false })
+                .limit(5),
             supabase
                 .from('user_quest')
                 .select(`
@@ -237,10 +481,8 @@ const getHomePage = async (req, res, next) => {
                 `)
                 .eq('user_id', userId)
                 .in('status', ['ACTIVE', 'DONE'])
-                .lte('period_start', today.end.toISOString().split('T')[0])
-                .gte('period_end', today.start.toISOString().split('T')[0]),
-            
-            // 주간 퀘스트 - 현재 주간 범위와 겹치는 퀘스트
+                .lte('period_start', todayRange.end.toISOString().split('T')[0])
+                .gte('period_end', todayRange.start.toISOString().split('T')[0]),
             supabase
                 .from('user_quest')
                 .select(`
@@ -260,147 +502,86 @@ const getHomePage = async (req, res, next) => {
                 `)
                 .eq('user_id', userId)
                 .in('status', ['ACTIVE', 'DONE'])
-                .lte('period_start', week.end.toISOString().split('T')[0])
-                .gte('period_end', week.start.toISOString().split('T')[0]),
-            
-            // 사용자 루틴
+                .lte('period_start', weekRange.end.toISOString().split('T')[0])
+                .gte('period_end', weekRange.start.toISOString().split('T')[0]),
             supabase
                 .from('routine')
-                .select('routine_id, name')
+                .select(`
+                    routine_id,
+                    name,
+                    updated_at,
+                    routine_setup (
+                        step_id
+                    )
+                `)
                 .eq('user_id', userId)
-                .order('created_at', { ascending: false })
-                .limit(3),
-            
-            // 활성 운동 목록
+                .eq('is_active', true)
+                .order('updated_at', { ascending: false })
+                .limit(4),
             supabase
                 .from('exercise')
-                .select('exercise_id, code, name')
+                .select('exercise_id, code, name, default_target_type')
                 .eq('is_active', true)
                 .order('name'),
-            
-            // 사용자 포인트 (points 컬럼 사용)
             supabase
                 .from('point_ledger')
                 .select('points')
                 .eq('user_id', userId),
-            
-            // 티어 규칙 (tier 오름차순)
             supabase
                 .from('tier_rule')
                 .select('tier, min_points, name')
-                .order('tier', { ascending: true }),
-            
-            // 28일 활동 기록
-            getLast28DaysActivity(userId)
+                .order('tier', { ascending: true })
         ]);
-        
-        // 오늘 운동 통계
-        let todayMinutes = 0;
-        if (todaySessionsResult.data) {
-            const totalSecs = todaySessionsResult.data.reduce(
-                (sum, session) => sum + getSessionDurationSec(session),
-                0
-            );
-            todayMinutes = Math.round(totalSecs / 60);
-        }
-        
-        // 일일 퀘스트 처리 (scope === 'DAILY')
+
+        if (todaySessionsResult.error) throw todaySessionsResult.error;
+        if (weekSessionsResult.error) throw weekSessionsResult.error;
+        if (recentSessionsResult.error) throw recentSessionsResult.error;
+        if (dailyQuestsResult.error) throw dailyQuestsResult.error;
+        if (weeklyQuestsResult.error) throw weeklyQuestsResult.error;
+        if (routinesResult.error) throw routinesResult.error;
+        if (exercisesResult.error) throw exercisesResult.error;
+        if (pointsResult.error) throw pointsResult.error;
+        if (tierRulesResult.error) throw tierRulesResult.error;
+
         const dailyQuests = (dailyQuestsResult.data || [])
-            .filter(q => q.quest_template?.scope === 'DAILY')
+            .filter((quest) => quest.quest_template?.scope === 'DAILY')
             .map(buildQuestCardModel);
-        
-        // 주간 퀘스트 처리 (scope === 'WEEKLY')
+
         const weeklyQuests = (weeklyQuestsResult.data || [])
-            .filter(q => q.quest_template?.scope === 'WEEKLY')
+            .filter((quest) => quest.quest_template?.scope === 'WEEKLY')
             .map(buildQuestCardModel);
-        
-        // 루틴
+
         const routines = routinesResult.data || [];
-        
-        // 운동 목록 (이모지 매핑)
-        const exerciseEmoji = {
-            'squat': '🏋️',
-            'pushup': '💪',
-            'lunge': '🦵',
-            'plank': '🧘',
-            'SQT': '🏋️',
-            'PSH': '💪',
-            'LNG': '🦵',
-            'PLK': '🧘'
-        };
-        
-        const exercises = (exercisesResult.data || []).map(e => ({
-            ...e,
-            emoji: exerciseEmoji[e.code] || '🎯'
+        const quickRoutines = await enrichQuickRoutines(userId, routines);
+
+        const exercises = (exercisesResult.data || []).map((exercise) => ({
+            ...exercise,
+            emoji: getExerciseEmoji(exercise.code)
         }));
-        
-        // 포인트 및 티어 계산 (points 컬럼 사용)
-        const totalPoints = (pointsResult.data || []).reduce((sum, p) => sum + (p.points || 0), 0);
-        const tierRules = tierRulesResult.data || [];
-        
-        // 기본 티어 설정 (tier_rule이 없을 때)
-        const defaultTiers = [
-            { tier: 1, name: '브론즈', emoji: '🥉', min_points: 0 },
-            { tier: 2, name: '실버', emoji: '🥈', min_points: 300 },
-            { tier: 3, name: '골드', emoji: '🥇', min_points: 1000 },
-            { tier: 4, name: '플래티넘', emoji: '💎', min_points: 3000 },
-            { tier: 5, name: '다이아몬드', emoji: '👑', min_points: 10000 }
-        ];
-        
-        // tier_rule에 emoji가 없으므로 매핑
-        const tierEmojis = {
-            '브론즈': '🥉',
-            '실버': '🥈',
-            '골드': '🥇',
-            '플래티넘': '💎',
-            '다이아몬드': '👑'
-        };
-        
-        // DB에서 가져온 티어에 emoji 추가
-        const effectiveTierRules = tierRules.length > 0 
-            ? tierRules.map(t => ({ ...t, emoji: tierEmojis[t.name] || '🏆' }))
-            : defaultTiers;
-        
-        let currentTier = effectiveTierRules[0] || { name: '브론즈', emoji: '🥉', min_points: 0 };
-        let nextTier = null;
-        
-        // 티어 찾기 (포인트 기준 내림차순으로 확인)
-        for (let i = effectiveTierRules.length - 1; i >= 0; i--) {
-            const rule = effectiveTierRules[i];
-            if (totalPoints >= rule.min_points) {
-                currentTier = rule;
-                if (i < effectiveTierRules.length - 1) {
-                    nextTier = effectiveTierRules[i + 1];
-                }
-                break;
-            }
-        }
-        
-        const tierInfo = {
-            name: currentTier.name,
-            emoji: currentTier.emoji || '🏆',
-            points: totalPoints,
-            nextTierName: nextTier?.name || null,
-            pointsToNext: nextTier ? (nextTier.min_points - totalPoints) : 0,
-            progress: nextTier 
-                ? Math.min(100, Math.round(((totalPoints - currentTier.min_points) / (nextTier.min_points - currentTier.min_points)) * 100))
-                : 100
-        };
-        
-        res.render('home', {
+
+        const todaySummary = aggregateSessionSummary(todaySessionsResult.data || []);
+        const weekSummary = aggregateSessionSummary(weekSessionsResult.data || []);
+
+        const recentSessions = (recentSessionsResult.data || []).map((session) => normalizeSessionResult(session));
+
+        const tierInfo = getTierInfo(pointsResult.data || [], tierRulesResult.data || []);
+
+        return res.render('home', {
             title: 'Home',
             today: formatKoreanDate(),
             activeTab: 'home',
-            streak: streakResult,
-            todayMinutes,
+            streak,
+            todaySummary,
+            weekSummary,
             dailyQuests,
             weeklyQuests,
-            routines,
+            quickRoutines,
+            routines: quickRoutines,
             exercises,
+            recentSessions,
             activityDays,
             tierInfo
         });
-        
     } catch (error) {
         console.error('Home page error:', error);
         next(error);

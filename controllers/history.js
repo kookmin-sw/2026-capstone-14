@@ -1,30 +1,351 @@
 const { supabase } = require('../config/db');
 
-// 오늘 날짜 범위
+const SESSION_STATUSES = ['DONE', 'ABORTED'];
+const RESULT_BASIS_CODES = ['REPS', 'DURATION'];
+const RESULT_UNIT_CODES = ['COUNT', 'SEC'];
+
+const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const toFiniteNumber = (value, fallback = 0) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const toRoundedNonNegativeInt = (value, fallback = 0) => {
+    const parsed = toFiniteNumber(value, fallback);
+    return Math.max(0, Math.round(parsed));
+};
+
+const normalizeResultBasis = (value) => {
+    const basis = String(value || '').trim().toUpperCase();
+    return RESULT_BASIS_CODES.includes(basis) ? basis : null;
+};
+
+const normalizeResultUnit = (value) => {
+    const unit = String(value || '').trim().toUpperCase();
+    return RESULT_UNIT_CODES.includes(unit) ? unit : null;
+};
+
+const computeDurationSecFromRange = (startedAtIso, endedAtIso = new Date().toISOString()) => {
+    const startMs = new Date(startedAtIso).getTime();
+    const endMs = new Date(endedAtIso).getTime();
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return 0;
+    return Math.max(0, Math.round((endMs - startMs) / 1000));
+};
+
 const getTodayRange = () => {
     const now = new Date();
     const start = new Date(now);
     start.setHours(0, 0, 0, 0);
-    
+
     const end = new Date(now);
     end.setHours(23, 59, 59, 999);
-    
+
     return { start, end };
 };
 
-// 주간 범위
 const getWeekRange = () => {
     const now = new Date();
     const dayOfWeek = now.getDay();
     const monday = new Date(now);
     monday.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
     monday.setHours(0, 0, 0, 0);
-    
+
     const sunday = new Date(monday);
     sunday.setDate(monday.getDate() + 6);
     sunday.setHours(23, 59, 59, 999);
-    
+
     return { start: monday, end: sunday };
+};
+
+const getPeriodRange = (period) => {
+    const now = new Date();
+    const normalized = String(period || 'all').trim().toLowerCase();
+
+    if (normalized === 'today') {
+        return getTodayRange();
+    }
+
+    if (normalized === 'week') {
+        return getWeekRange();
+    }
+
+    if (normalized === 'month') {
+        const start = new Date(now);
+        start.setDate(1);
+        start.setHours(0, 0, 0, 0);
+        return { start, end: null };
+    }
+
+    if (normalized === '90d') {
+        const start = new Date(now);
+        start.setDate(start.getDate() - 89);
+        start.setHours(0, 0, 0, 0);
+        return { start, end: null };
+    }
+
+    return { start: null, end: null };
+};
+
+const mergeSessionResult = (session, snapshotScore = null) => {
+    const mergedBasis =
+        normalizeResultBasis(session?.result_basis) ||
+        normalizeResultBasis(snapshotScore?.result_basis) ||
+        'REPS';
+
+    const mergedUnit =
+        normalizeResultUnit(session?.total_result_unit) ||
+        normalizeResultUnit(snapshotScore?.result_unit) ||
+        (mergedBasis === 'REPS' ? 'COUNT' : 'SEC');
+
+    const rawResultValue =
+        session?.total_result_value ??
+        snapshotScore?.result_value ??
+        0;
+    const totalResultValue = toRoundedNonNegativeInt(rawResultValue, 0);
+
+    const rawScore = session?.final_score ?? snapshotScore?.score;
+    const finalScore = Number.isFinite(Number(rawScore))
+        ? Math.max(0, Math.min(100, Math.round(Number(rawScore))))
+        : 0;
+
+    const startedAt = session?.started_at || null;
+    const endedAt = session?.ended_at || null;
+    const durationSec = startedAt
+        ? computeDurationSecFromRange(startedAt, endedAt || new Date().toISOString())
+        : 0;
+
+    const isRepBased = mergedBasis === 'REPS' || mergedUnit === 'COUNT';
+    const totalReps = isRepBased ? totalResultValue : 0;
+    const totalDurationResult = isRepBased ? 0 : totalResultValue;
+
+    return {
+        ...session,
+        result_basis: mergedBasis,
+        total_result_value: totalResultValue,
+        total_result_unit: mergedUnit,
+        final_score: finalScore,
+        summary_feedback: session?.summary_feedback || snapshotScore?.summary_feedback || null,
+        duration_sec: durationSec,
+        total_reps: totalReps,
+        total_duration_result: totalDurationResult
+    };
+};
+
+const calculateStreak = (rows = []) => {
+    if (!Array.isArray(rows) || rows.length === 0) return 0;
+
+    const uniqueDates = [];
+    const visited = new Set();
+
+    for (const row of rows) {
+        const date = new Date(row.started_at);
+        if (Number.isNaN(date.getTime())) continue;
+        const dateKey = date.toDateString();
+        if (visited.has(dateKey)) continue;
+        visited.add(dateKey);
+        uniqueDates.push(new Date(dateKey));
+    }
+
+    if (uniqueDates.length === 0) return 0;
+
+    const today = new Date();
+    const todayDate = new Date(today.toDateString());
+    const yesterdayDate = new Date(todayDate);
+    yesterdayDate.setDate(todayDate.getDate() - 1);
+
+    const firstDate = uniqueDates[0].toDateString();
+    if (firstDate !== todayDate.toDateString() && firstDate !== yesterdayDate.toDateString()) {
+        return 0;
+    }
+
+    let streak = 1;
+    for (let index = 1; index < uniqueDates.length; index += 1) {
+        const diffDays = Math.round((uniqueDates[index - 1] - uniqueDates[index]) / 86400000);
+        if (diffDays === 1) {
+            streak += 1;
+        } else {
+            break;
+        }
+    }
+
+    return streak;
+};
+
+const buildPeriodStats = (rows = []) => {
+    const normalized = rows.map((row) => mergeSessionResult(row));
+    const count = normalized.length;
+    const totalDurationSec = normalized.reduce((sum, row) => sum + (row.duration_sec || 0), 0);
+    const totalMinutes = Math.round(totalDurationSec / 60);
+    const totalReps = normalized.reduce((sum, row) => sum + (row.total_reps || 0), 0);
+    const totalDurationResultSec = normalized.reduce((sum, row) => sum + (row.total_duration_result || 0), 0);
+
+    const validScores = normalized
+        .map((row) => Number(row.final_score))
+        .filter((score) => Number.isFinite(score));
+
+    const avgScore = validScores.length > 0
+        ? Math.round(validScores.reduce((sum, score) => sum + score, 0) / validScores.length)
+        : 0;
+
+    return {
+        count,
+        totalMinutes,
+        avgScore,
+        totalReps,
+        totalDurationSec: totalDurationResultSec
+    };
+};
+
+const fetchFinalSnapshotMaps = async (sessionIds = []) => {
+    if (!Array.isArray(sessionIds) || sessionIds.length === 0) {
+        return {
+            snapshotHeaderBySessionId: new Map(),
+            snapshotScoreBySessionId: new Map()
+        };
+    }
+
+    const { data: snapshotRows, error: snapshotError } = await supabase
+        .from('session_snapshot')
+        .select('session_id, session_snapshot_id, snapshot_no, recorded_at')
+        .in('session_id', sessionIds)
+        .eq('snapshot_type', 'FINAL')
+        .order('session_id', { ascending: true })
+        .order('snapshot_no', { ascending: false });
+
+    if (snapshotError) throw snapshotError;
+
+    const snapshotHeaderBySessionId = new Map();
+    for (const row of snapshotRows || []) {
+        if (!snapshotHeaderBySessionId.has(row.session_id)) {
+            snapshotHeaderBySessionId.set(row.session_id, row);
+        }
+    }
+
+    const snapshotIds = Array.from(snapshotHeaderBySessionId.values())
+        .map((row) => row.session_snapshot_id)
+        .filter(Boolean);
+
+    if (snapshotIds.length === 0) {
+        return {
+            snapshotHeaderBySessionId,
+            snapshotScoreBySessionId: new Map()
+        };
+    }
+
+    const { data: scoreRows, error: scoreError } = await supabase
+        .from('session_snapshot_score')
+        .select('session_snapshot_id, score, result_basis, result_value, result_unit, summary_feedback, detail')
+        .in('session_snapshot_id', snapshotIds);
+
+    if (scoreError) throw scoreError;
+
+    const scoreBySnapshotId = new Map(
+        (scoreRows || []).map((row) => [row.session_snapshot_id, row])
+    );
+
+    const snapshotScoreBySessionId = new Map();
+    for (const [sessionId, snapshotHeader] of snapshotHeaderBySessionId.entries()) {
+        const snapshotScore = scoreBySnapshotId.get(snapshotHeader.session_snapshot_id) || null;
+        if (snapshotScore) {
+            snapshotScoreBySessionId.set(sessionId, snapshotScore);
+        }
+    }
+
+    return {
+        snapshotHeaderBySessionId,
+        snapshotScoreBySessionId
+    };
+};
+
+const loadRoutineContextBySetId = async (setId) => {
+    if (!setId) return null;
+
+    const context = {
+        workout_set: null,
+        step_instance: null,
+        routine_instance: null,
+        routine: null
+    };
+
+    const { data: workoutSet, error: setError } = await supabase
+        .from('workout_set')
+        .select(`
+            set_id,
+            step_instance_id,
+            set_no,
+            target_type,
+            target_value,
+            actual_value,
+            value_unit,
+            result_basis,
+            score,
+            is_success,
+            duration_sec,
+            rest_sec_after,
+            status,
+            started_at,
+            ended_at,
+            detail
+        `)
+        .eq('set_id', setId)
+        .maybeSingle();
+
+    if (setError) throw setError;
+    context.workout_set = workoutSet || null;
+
+    if (!workoutSet?.step_instance_id) return context;
+
+    const { data: stepInstance, error: stepError } = await supabase
+        .from('routine_step_instance')
+        .select(`
+            step_instance_id,
+            routine_instance_id,
+            order_no,
+            target_type_snapshot,
+            target_value_snapshot,
+            planned_sets,
+            completed_sets,
+            status,
+            started_at,
+            ended_at
+        `)
+        .eq('step_instance_id', workoutSet.step_instance_id)
+        .maybeSingle();
+
+    if (stepError) throw stepError;
+    context.step_instance = stepInstance || null;
+
+    if (!stepInstance?.routine_instance_id) return context;
+
+    const { data: routineInstance, error: routineInstanceError } = await supabase
+        .from('routine_instance')
+        .select(`
+            routine_instance_id,
+            routine_id,
+            status,
+            started_at,
+            ended_at,
+            total_score
+        `)
+        .eq('routine_instance_id', stepInstance.routine_instance_id)
+        .maybeSingle();
+
+    if (routineInstanceError) throw routineInstanceError;
+    context.routine_instance = routineInstance || null;
+
+    if (!routineInstance?.routine_id) return context;
+
+    const { data: routine, error: routineError } = await supabase
+        .from('routine')
+        .select('routine_id, name')
+        .eq('routine_id', routineInstance.routine_id)
+        .maybeSingle();
+
+    if (routineError) throw routineError;
+    context.routine = routine || null;
+
+    return context;
 };
 
 // 운동 히스토리 메인 페이지
@@ -33,27 +354,46 @@ const getHistoryPage = async (req, res, next) => {
         const userId = req.user.user_id;
         const today = getTodayRange();
         const week = getWeekRange();
-        
-        // 페이지네이션
-        const page = parseInt(req.query.page) || 1;
-        const limit = 10;
+
+        const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+        const limit = 12;
         const offset = (page - 1) * limit;
 
-        // 필터
-        const { exercise, period, sort } = req.query;
+        const requestedExercise = String(req.query.exercise || 'all');
+        const parsedExerciseId = Number.parseInt(requestedExercise, 10);
+        const exerciseIdFilter = Number.isFinite(parsedExerciseId) ? parsedExerciseId : null;
 
-        // 기본 쿼리
+        const periodFilter = ['all', 'today', 'week', 'month', '90d'].includes(String(req.query.period || '').toLowerCase())
+            ? String(req.query.period || 'all').toLowerCase()
+            : 'all';
+
+        const statusFilterRaw = String(req.query.status || 'DONE').trim().toUpperCase();
+        const statusFilter = ['ALL', ...SESSION_STATUSES].includes(statusFilterRaw)
+            ? statusFilterRaw
+            : 'DONE';
+
+        const sortFilterRaw = String(req.query.sort || 'latest').trim().toLowerCase();
+        const sortFilter = ['latest', 'oldest', 'score'].includes(sortFilterRaw)
+            ? sortFilterRaw
+            : 'latest';
+
+        const periodRange = getPeriodRange(periodFilter);
+
         let query = supabase
             .from('workout_session')
             .select(`
                 session_id,
                 mode,
-                started_at,
-                ended_at,
-                duration_sec,
-                total_reps,
+                status,
+                selected_view,
+                set_id,
+                result_basis,
+                total_result_value,
+                total_result_unit,
                 final_score,
                 summary_feedback,
+                started_at,
+                ended_at,
                 exercise:exercise_id (
                     exercise_id,
                     code,
@@ -61,146 +401,148 @@ const getHistoryPage = async (req, res, next) => {
                 )
             `, { count: 'exact' })
             .eq('user_id', userId)
-            .not('ended_at', 'is', null);
+            .in('status', SESSION_STATUSES);
 
-        // 운동 필터
-        if (exercise && exercise !== 'all') {
-            query = query.eq('exercise_id', exercise);
+        if (exerciseIdFilter != null) {
+            query = query.eq('exercise_id', exerciseIdFilter);
         }
 
-        // 기간 필터
-        if (period === 'today') {
-            query = query.gte('started_at', today.start.toISOString());
-        } else if (period === 'week') {
-            query = query.gte('started_at', week.start.toISOString());
-        } else if (period === 'month') {
-            const monthStart = new Date();
-            monthStart.setDate(1);
-            monthStart.setHours(0, 0, 0, 0);
-            query = query.gte('started_at', monthStart.toISOString());
+        if (statusFilter !== 'ALL') {
+            query = query.eq('status', statusFilter);
         }
 
-        // 정렬
-        if (sort === 'score') {
-            query = query.order('final_score', { ascending: false });
-        } else if (sort === 'duration') {
-            query = query.order('duration_sec', { ascending: false });
+        if (periodRange.start) {
+            query = query.gte('started_at', periodRange.start.toISOString());
+        }
+
+        if (periodRange.end) {
+            query = query.lte('started_at', periodRange.end.toISOString());
+        }
+
+        if (sortFilter === 'score') {
+            query = query
+                .order('final_score', { ascending: false, nullsFirst: false })
+                .order('started_at', { ascending: false });
+        } else if (sortFilter === 'oldest') {
+            query = query.order('started_at', { ascending: true });
         } else {
             query = query.order('started_at', { ascending: false });
         }
 
-        // 페이지네이션 적용
         query = query.range(offset, offset + limit - 1);
 
-        const { data: sessions, error, count } = await query;
+        const { data: sessions, error: sessionsError, count } = await query;
+        if (sessionsError) throw sessionsError;
 
-        if (error) throw error;
+        const { snapshotHeaderBySessionId, snapshotScoreBySessionId } = await fetchFinalSnapshotMaps(
+            (sessions || []).map((row) => row.session_id)
+        );
 
-        // 운동 목록 (필터용)
-        const { data: exercises } = await supabase
+        const normalizedSessions = (sessions || []).map((session) => {
+            const snapshotHeader = snapshotHeaderBySessionId.get(session.session_id) || null;
+            const snapshotScore = snapshotScoreBySessionId.get(session.session_id) || null;
+            const merged = mergeSessionResult(session, snapshotScore);
+
+            return {
+                ...merged,
+                final_snapshot: snapshotHeader
+                    ? {
+                        session_snapshot_id: snapshotHeader.session_snapshot_id,
+                        snapshot_no: snapshotHeader.snapshot_no,
+                        recorded_at: snapshotHeader.recorded_at
+                    }
+                    : null
+            };
+        });
+
+        const { data: exercises, error: exerciseError } = await supabase
             .from('exercise')
             .select('exercise_id, name')
             .eq('is_active', true)
             .order('name');
+        if (exerciseError) throw exerciseError;
 
-        // 통계 데이터 조회
-        // 오늘 운동 횟수/시간
-        const { data: todaySessions } = await supabase
-            .from('workout_session')
-            .select('duration_sec, final_score')
-            .eq('user_id', userId)
-            .gte('started_at', today.start.toISOString())
-            .lte('started_at', today.end.toISOString())
-            .not('ended_at', 'is', null);
+        const [
+            { data: todaySessions, error: todayError },
+            { data: weekSessions, error: weekError },
+            { data: recentSessions, error: recentError },
+            { count: totalDoneCount, error: totalDoneError },
+            { count: totalAbortedCount, error: totalAbortedError },
+            { data: bestSession, error: bestError },
+            { data: streakRows, error: streakError }
+        ] = await Promise.all([
+            supabase
+                .from('workout_session')
+                .select('started_at, ended_at, final_score, result_basis, total_result_value, total_result_unit')
+                .eq('user_id', userId)
+                .eq('status', 'DONE')
+                .gte('started_at', today.start.toISOString())
+                .lte('started_at', today.end.toISOString()),
+            supabase
+                .from('workout_session')
+                .select('started_at, ended_at, final_score, result_basis, total_result_value, total_result_unit')
+                .eq('user_id', userId)
+                .eq('status', 'DONE')
+                .gte('started_at', week.start.toISOString())
+                .lte('started_at', week.end.toISOString()),
+            supabase
+                .from('workout_session')
+                .select('started_at, ended_at, final_score, result_basis, total_result_value, total_result_unit')
+                .eq('user_id', userId)
+                .eq('status', 'DONE')
+                .gte('started_at', new Date(Date.now() - (29 * 86400000)).toISOString()),
+            supabase
+                .from('workout_session')
+                .select('session_id', { count: 'exact', head: true })
+                .eq('user_id', userId)
+                .eq('status', 'DONE'),
+            supabase
+                .from('workout_session')
+                .select('session_id', { count: 'exact', head: true })
+                .eq('user_id', userId)
+                .eq('status', 'ABORTED'),
+            supabase
+                .from('workout_session')
+                .select('final_score, started_at, exercise:exercise_id(name)')
+                .eq('user_id', userId)
+                .eq('status', 'DONE')
+                .order('final_score', { ascending: false, nullsFirst: false })
+                .limit(1)
+                .maybeSingle(),
+            supabase
+                .from('workout_session')
+                .select('started_at')
+                .eq('user_id', userId)
+                .eq('status', 'DONE')
+                .order('started_at', { ascending: false })
+        ]);
 
-        const todayStats = {
-            count: todaySessions?.length || 0,
-            totalMinutes: Math.round((todaySessions?.reduce((sum, s) => sum + (s.duration_sec || 0), 0) || 0) / 60),
-            avgScore: todaySessions?.length 
-                ? Math.round(todaySessions.reduce((sum, s) => sum + (s.final_score || 0), 0) / todaySessions.length)
-                : 0
-        };
+        if (todayError) throw todayError;
+        if (weekError) throw weekError;
+        if (recentError) throw recentError;
+        if (totalDoneError) throw totalDoneError;
+        if (totalAbortedError) throw totalAbortedError;
+        if (bestError) throw bestError;
+        if (streakError) throw streakError;
 
-        // 이번 주 통계
-        const { data: weekSessions } = await supabase
-            .from('workout_session')
-            .select('started_at, duration_sec, final_score')
-            .eq('user_id', userId)
-            .gte('started_at', week.start.toISOString())
-            .lte('started_at', week.end.toISOString())
-            .not('ended_at', 'is', null);
+        const todayStats = buildPeriodStats(todaySessions || []);
+        const weekStats = buildPeriodStats(weekSessions || []);
+        const recentStats = buildPeriodStats(recentSessions || []);
+        const streak = calculateStreak(streakRows || []);
 
-        const uniqueWeekDays = new Set(
-            (weekSessions || []).map(s => new Date(s.started_at).toDateString())
-        ).size;
-
-        const weekStats = {
-            count: weekSessions?.length || 0,
-            days: uniqueWeekDays,
-            totalMinutes: Math.round((weekSessions?.reduce((sum, s) => sum + (s.duration_sec || 0), 0) || 0) / 60),
-            avgScore: weekSessions?.length 
-                ? Math.round(weekSessions.reduce((sum, s) => sum + (s.final_score || 0), 0) / weekSessions.length)
-                : 0
-        };
-
-        // 전체 통계
-        const { count: totalCount } = await supabase
-            .from('workout_session')
-            .select('session_id', { count: 'exact', head: true })
-            .eq('user_id', userId)
-            .not('ended_at', 'is', null);
-
-        // 최고 점수
-        const { data: bestSession } = await supabase
-            .from('workout_session')
-            .select('final_score, started_at, exercise:exercise_id(name)')
-            .eq('user_id', userId)
-            .not('ended_at', 'is', null)
-            .order('final_score', { ascending: false })
-            .limit(1)
-            .single();
-
-        // 연속 운동 일수 계산
-        const { data: allDates } = await supabase
-            .from('workout_session')
-            .select('started_at')
-            .eq('user_id', userId)
-            .not('ended_at', 'is', null)
-            .order('started_at', { ascending: false });
-
-        let streak = 0;
-        if (allDates && allDates.length > 0) {
-            const uniqueDates = [...new Set(allDates.map(s => 
-                new Date(s.started_at).toDateString()
-            ))].map(d => new Date(d));
-
-            const todayStr = new Date().toDateString();
-            const yesterdayStr = new Date(Date.now() - 86400000).toDateString();
-
-            // 오늘 또는 어제 운동했는지 확인
-            if (uniqueDates[0].toDateString() === todayStr || 
-                uniqueDates[0].toDateString() === yesterdayStr) {
-                streak = 1;
-                for (let i = 1; i < uniqueDates.length; i++) {
-                    const diff = (uniqueDates[i-1] - uniqueDates[i]) / 86400000;
-                    if (diff === 1) {
-                        streak++;
-                    } else {
-                        break;
-                    }
-                }
-            }
-        }
-
-        // 총 페이지 수
         const totalPages = Math.ceil((count || 0) / limit);
 
         res.render('history/index', {
             title: '운동 히스토리',
             activeTab: 'history',
-            sessions: sessions || [],
+            sessions: normalizedSessions,
             exercises: exercises || [],
-            filters: { exercise, period, sort },
+            filters: {
+                exercise: exerciseIdFilter != null ? String(exerciseIdFilter) : 'all',
+                period: periodFilter,
+                status: statusFilter,
+                sort: sortFilter
+            },
             pagination: {
                 page,
                 totalPages,
@@ -209,9 +551,13 @@ const getHistoryPage = async (req, res, next) => {
             stats: {
                 today: todayStats,
                 week: weekStats,
-                total: totalCount || 0,
-                streak,
-                best: bestSession
+                recent30: recentStats,
+                overview: {
+                    doneCount: totalDoneCount || 0,
+                    abortedCount: totalAbortedCount || 0,
+                    streak,
+                    best: bestSession || null
+                }
             }
         });
     } catch (error) {
@@ -223,61 +569,119 @@ const getHistoryPage = async (req, res, next) => {
 const getSessionDetail = async (req, res, next) => {
     try {
         const userId = req.user.user_id;
-        const { sessionId } = req.params;
+        const sessionId = Number.parseInt(req.params.sessionId, 10);
 
-        const { data: session, error } = await supabase
+        if (!Number.isFinite(sessionId)) {
+            return res.status(400).json({ success: false, error: '유효하지 않은 세션 ID입니다.' });
+        }
+
+        const { data: session, error: sessionError } = await supabase
             .from('workout_session')
             .select(`
                 session_id,
                 mode,
-                started_at,
-                ended_at,
-                duration_sec,
-                total_reps,
+                status,
+                selected_view,
+                set_id,
+                result_basis,
+                total_result_value,
+                total_result_unit,
                 final_score,
                 summary_feedback,
-                detail,
+                started_at,
+                ended_at,
                 exercise:exercise_id (
                     exercise_id,
                     code,
                     name
-                ),
-                session_metric_result (
-                    score,
-                    raw,
-                    metric:metric_id (
-                        metric_id,
-                        key,
-                        title,
-                        unit
-                    )
                 )
             `)
             .eq('session_id', sessionId)
             .eq('user_id', userId)
-            .single();
+            .maybeSingle();
 
-        if (error || !session) {
-            return res.status(404).json({ error: '세션을 찾을 수 없습니다.' });
+        if (sessionError) throw sessionError;
+        if (!session) {
+            return res.status(404).json({ success: false, error: '세션을 찾을 수 없습니다.' });
         }
 
-        const { data: workoutSets, error: setError } = await supabase
-            .from('workout_set')
-            .select('set_no, phase, target_reps, actual_reps, duration_sec, started_at, ended_at')
+        const { data: finalSnapshot, error: snapshotError } = await supabase
+            .from('session_snapshot')
+            .select('session_snapshot_id, snapshot_no, recorded_at')
             .eq('session_id', sessionId)
-            .order('set_no', { ascending: true })
-            .order('started_at', { ascending: true });
+            .eq('snapshot_type', 'FINAL')
+            .order('snapshot_no', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        if (snapshotError) throw snapshotError;
 
-        if (setError) throw setError;
+        let snapshotScore = null;
+        let snapshotMetrics = [];
 
-        session.workout_sets = workoutSets || [];
-        session.session_metric_result = (session.session_metric_result || []).sort((a, b) => {
-            const aTitle = a.metric?.title || '';
-            const bTitle = b.metric?.title || '';
-            return aTitle.localeCompare(bTitle, 'ko');
+        if (finalSnapshot?.session_snapshot_id) {
+            const [{ data: scoreRow, error: scoreError }, { data: metricRows, error: metricError }] = await Promise.all([
+                supabase
+                    .from('session_snapshot_score')
+                    .select('score, result_basis, result_value, result_unit, summary_feedback, detail')
+                    .eq('session_snapshot_id', finalSnapshot.session_snapshot_id)
+                    .maybeSingle(),
+                supabase
+                    .from('session_snapshot_metric')
+                    .select('metric_key, metric_name, avg_score, avg_raw_value, min_raw_value, max_raw_value, sample_count, detail')
+                    .eq('session_snapshot_id', finalSnapshot.session_snapshot_id)
+            ]);
+
+            if (scoreError) throw scoreError;
+            if (metricError) throw metricError;
+
+            snapshotScore = scoreRow || null;
+            snapshotMetrics = metricRows || [];
+        }
+
+        const { data: sessionEvents, error: eventError } = await supabase
+            .from('session_event')
+            .select('event_id, event_time, type, payload')
+            .eq('session_id', sessionId)
+            .order('event_time', { ascending: false })
+            .limit(100);
+        if (eventError) throw eventError;
+
+        const mergedSession = mergeSessionResult(session, snapshotScore);
+        const detail = isPlainObject(snapshotScore?.detail) ? snapshotScore.detail : {};
+        const timeline = Array.isArray(detail.score_timeline) ? detail.score_timeline : [];
+        const repRecords = Array.isArray(detail.rep_records) ? detail.rep_records : [];
+        const setRecords = Array.isArray(detail.set_records) ? detail.set_records : [];
+        const detailEvents = Array.isArray(detail.events) ? detail.events : [];
+
+        const sortedMetrics = [...snapshotMetrics].sort((a, b) => {
+            const scoreDiff = toFiniteNumber(b.avg_score, 0) - toFiniteNumber(a.avg_score, 0);
+            if (scoreDiff !== 0) return scoreDiff;
+            return String(a.metric_name || '').localeCompare(String(b.metric_name || ''), 'ko');
         });
 
-        res.json(session);
+        const routineContext = await loadRoutineContextBySetId(mergedSession.set_id);
+
+        return res.json({
+            success: true,
+            session: {
+                ...mergedSession,
+                final_snapshot: finalSnapshot
+                    ? {
+                        session_snapshot_id: finalSnapshot.session_snapshot_id,
+                        snapshot_no: finalSnapshot.snapshot_no,
+                        recorded_at: finalSnapshot.recorded_at
+                    }
+                    : null
+            },
+            metrics: sortedMetrics,
+            timeline,
+            rep_records: repRecords,
+            set_records: setRecords,
+            detail_events: detailEvents,
+            session_events: sessionEvents || [],
+            routine_context: routineContext,
+            detail
+        });
     } catch (error) {
         next(error);
     }
@@ -287,10 +691,9 @@ const getSessionDetail = async (req, res, next) => {
 const getHistoryStats = async (req, res, next) => {
     try {
         const userId = req.user.user_id;
-        const { days = 30 } = req.query;
-        const parsedDays = Number.parseInt(days, 10);
+        const parsedDays = Number.parseInt(req.query.days, 10);
         const safeDays = Number.isFinite(parsedDays)
-            ? Math.min(Math.max(parsedDays, 1), 180)
+            ? Math.min(Math.max(parsedDays, 7), 180)
             : 30;
 
         const startDate = new Date();
@@ -299,90 +702,118 @@ const getHistoryStats = async (req, res, next) => {
 
         const { data: sessions, error } = await supabase
             .from('workout_session')
-            .select('started_at, duration_sec, final_score, total_reps, exercise:exercise_id(code, name)')
+            .select(`
+                session_id,
+                started_at,
+                ended_at,
+                final_score,
+                result_basis,
+                total_result_value,
+                total_result_unit,
+                mode,
+                selected_view,
+                exercise:exercise_id (
+                    exercise_id,
+                    code,
+                    name
+                )
+            `)
             .eq('user_id', userId)
+            .eq('status', 'DONE')
             .gte('started_at', startDate.toISOString())
-            .not('ended_at', 'is', null)
-            .order('started_at');
+            .order('started_at', { ascending: true });
 
         if (error) throw error;
 
-        // 일별 집계
         const dailyStats = {};
-        (sessions || []).forEach(session => {
-            const date = new Date(session.started_at).toISOString().split('T')[0];
-            if (!dailyStats[date]) {
-                dailyStats[date] = {
-                    date,
-                    count: 0,
-                    totalMinutes: 0,
-                    totalReps: 0,
-                    scores: [],
-                    bestScore: null,
-                    exercises: {}
-                };
-            }
-            dailyStats[date].count++;
-            dailyStats[date].totalMinutes += Math.round((session.duration_sec || 0) / 60);
-            dailyStats[date].totalReps += session.total_reps || 0;
-            if (typeof session.final_score === 'number') {
-                dailyStats[date].scores.push(session.final_score);
-                dailyStats[date].bestScore = dailyStats[date].bestScore === null
-                    ? session.final_score
-                    : Math.max(dailyStats[date].bestScore, session.final_score);
-            }
-            
-            const exerciseName = session.exercise?.name || '기타';
-            dailyStats[date].exercises[exerciseName] = (dailyStats[date].exercises[exerciseName] || 0) + 1;
-        });
-
-        // 평균 점수 계산
-        Object.values(dailyStats).forEach(day => {
-            day.avgScore = day.scores.length 
-                ? Math.round(day.scores.reduce((a, b) => a + b, 0) / day.scores.length)
-                : 0;
-            day.bestScore = day.bestScore ?? 0;
-            delete day.scores;
-        });
-
-        // 운동별 통계
         const exerciseStats = {};
-        (sessions || []).forEach(session => {
-            const name = session.exercise?.name || '기타';
-            if (!exerciseStats[name]) {
-                exerciseStats[name] = {
-                    name,
+
+        for (const rawSession of sessions || []) {
+            const session = mergeSessionResult(rawSession);
+            const startedAt = new Date(session.started_at);
+            if (Number.isNaN(startedAt.getTime())) continue;
+
+            const dateKey = startedAt.toISOString().split('T')[0];
+
+            if (!dailyStats[dateKey]) {
+                dailyStats[dateKey] = {
+                    date: dateKey,
                     count: 0,
                     totalMinutes: 0,
                     totalReps: 0,
-                    avgScore: 0,
+                    totalResultSec: 0,
                     bestScore: 0,
-                    scores: []
+                    scoreSamples: []
                 };
             }
-            exerciseStats[name].count++;
-            exerciseStats[name].totalMinutes += Math.round((session.duration_sec || 0) / 60);
-            exerciseStats[name].totalReps += session.total_reps || 0;
-            if (typeof session.final_score === 'number') {
-                exerciseStats[name].scores.push(session.final_score);
-                exerciseStats[name].bestScore = Math.max(exerciseStats[name].bestScore, session.final_score);
+
+            dailyStats[dateKey].count += 1;
+            dailyStats[dateKey].totalMinutes += Math.round((session.duration_sec || 0) / 60);
+            dailyStats[dateKey].totalReps += session.total_reps || 0;
+            dailyStats[dateKey].totalResultSec += session.total_duration_result || 0;
+            dailyStats[dateKey].scoreSamples.push(session.final_score || 0);
+            dailyStats[dateKey].bestScore = Math.max(dailyStats[dateKey].bestScore, session.final_score || 0);
+
+            const exerciseName = session.exercise?.name || '기타';
+            const exerciseCode = session.exercise?.code || 'etc';
+            if (!exerciseStats[exerciseCode]) {
+                exerciseStats[exerciseCode] = {
+                    code: exerciseCode,
+                    name: exerciseName,
+                    count: 0,
+                    totalMinutes: 0,
+                    totalReps: 0,
+                    totalResultSec: 0,
+                    bestScore: 0,
+                    scoreSamples: []
+                };
             }
-        });
 
-        Object.values(exerciseStats).forEach(ex => {
-            ex.avgScore = ex.scores.length 
-                ? Math.round(ex.scores.reduce((a, b) => a + b, 0) / ex.scores.length)
-                : 0;
-            delete ex.scores;
-        });
+            exerciseStats[exerciseCode].count += 1;
+            exerciseStats[exerciseCode].totalMinutes += Math.round((session.duration_sec || 0) / 60);
+            exerciseStats[exerciseCode].totalReps += session.total_reps || 0;
+            exerciseStats[exerciseCode].totalResultSec += session.total_duration_result || 0;
+            exerciseStats[exerciseCode].bestScore = Math.max(exerciseStats[exerciseCode].bestScore, session.final_score || 0);
+            exerciseStats[exerciseCode].scoreSamples.push(session.final_score || 0);
+        }
 
-        res.json({
-            daily: Object.values(dailyStats),
-            exercises: Object.values(exerciseStats).sort((a, b) => {
+        const daily = Object.values(dailyStats)
+            .map((row) => ({
+                date: row.date,
+                count: row.count,
+                totalMinutes: row.totalMinutes,
+                totalReps: row.totalReps,
+                totalResultSec: row.totalResultSec,
+                bestScore: row.bestScore,
+                avgScore: row.scoreSamples.length > 0
+                    ? Math.round(row.scoreSamples.reduce((sum, score) => sum + score, 0) / row.scoreSamples.length)
+                    : 0
+            }))
+            .sort((a, b) => a.date.localeCompare(b.date));
+
+        const exercises = Object.values(exerciseStats)
+            .map((row) => ({
+                code: row.code,
+                name: row.name,
+                count: row.count,
+                totalMinutes: row.totalMinutes,
+                totalReps: row.totalReps,
+                totalResultSec: row.totalResultSec,
+                bestScore: row.bestScore,
+                avgScore: row.scoreSamples.length > 0
+                    ? Math.round(row.scoreSamples.reduce((sum, score) => sum + score, 0) / row.scoreSamples.length)
+                    : 0
+            }))
+            .sort((a, b) => {
                 if (b.count !== a.count) return b.count - a.count;
                 return b.avgScore - a.avgScore;
-            }),
-            requestedDays: safeDays
+            });
+
+        return res.json({
+            success: true,
+            requestedDays: safeDays,
+            daily,
+            exercises
         });
     } catch (error) {
         next(error);
@@ -393,34 +824,33 @@ const getHistoryStats = async (req, res, next) => {
 const deleteSession = async (req, res, next) => {
     try {
         const userId = req.user.user_id;
-        const { sessionId } = req.params;
+        const sessionId = Number.parseInt(req.params.sessionId, 10);
 
-        // 세션 소유자 확인
+        if (!Number.isFinite(sessionId)) {
+            return res.status(400).json({ success: false, error: '유효하지 않은 세션 ID입니다.' });
+        }
+
         const { data: session, error: checkError } = await supabase
             .from('workout_session')
             .select('session_id')
             .eq('session_id', sessionId)
             .eq('user_id', userId)
-            .single();
+            .maybeSingle();
 
-        if (checkError || !session) {
-            return res.status(404).json({ error: '세션을 찾을 수 없습니다.' });
+        if (checkError) throw checkError;
+        if (!session) {
+            return res.status(404).json({ success: false, error: '세션을 찾을 수 없습니다.' });
         }
 
-        // 관련 데이터 삭제 (cascade가 설정되지 않은 경우)
-        await supabase.from('session_metric_result').delete().eq('session_id', sessionId);
-        await supabase.from('session_event').delete().eq('session_id', sessionId);
-        await supabase.from('workout_set').delete().eq('session_id', sessionId);
-
-        // 세션 삭제
-        const { error } = await supabase
+        const { error: deleteError } = await supabase
             .from('workout_session')
             .delete()
-            .eq('session_id', sessionId);
+            .eq('session_id', sessionId)
+            .eq('user_id', userId);
 
-        if (error) throw error;
+        if (deleteError) throw deleteError;
 
-        res.json({ success: true });
+        return res.json({ success: true });
     } catch (error) {
         next(error);
     }
@@ -432,3 +862,4 @@ module.exports = {
     getHistoryStats,
     deleteSession
 };
+

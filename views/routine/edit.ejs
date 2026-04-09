@@ -2,7 +2,7 @@
   <section class="page-header">
     <div>
       <h1><%= isNew ? '새 루틴 만들기' : '루틴 수정' %></h1>
-      <p class="muted">운동 순서와 세트, 휴식 시간을 설정하세요</p>
+      <p class="muted">운동 순서, 목표 기준, 세트/휴식 시간을 설정하세요</p>
     </div>
     <div class="actions">
       <a href="/routine" class="ghost">← 돌아가기</a>
@@ -10,74 +10,75 @@
   </section>
 
   <form id="routineForm" class="grid two">
-    <!-- 루틴 기본 정보 -->
     <div class="card">
       <h3>루틴 정보</h3>
       <div class="form-group">
         <label for="routineName">루틴 이름</label>
-        <input 
-          type="text" 
-          id="routineName" 
-          name="name" 
-          placeholder="예: 전신 운동 A"
+        <input
+          type="text"
+          id="routineName"
+          name="name"
+          maxlength="100"
+          placeholder="예: 전신 근력 루틴 A"
           value="<%= routine ? routine.name : '' %>"
           required
         />
       </div>
     </div>
 
-    <!-- 운동 추가 -->
     <div class="card">
       <h3>운동 추가</h3>
       <div class="form-group">
         <label for="exerciseSelect">운동 선택</label>
         <select id="exerciseSelect" class="form-select">
           <option value="">운동을 선택하세요</option>
-          <% exercises.forEach(ex => { %>
-            <option value="<%= ex.exercise_id %>" data-name="<%= ex.name %>">
-              <%= ex.name %>
+          <% exercises.forEach((exercise) => { %>
+            <option
+              value="<%= exercise.exercise_id %>"
+              data-name="<%= exercise.name %>"
+              data-default-target="<%= exercise.default_target_type === 'TIME' ? 'TIME' : 'REPS' %>">
+              <%= exercise.name %>
             </option>
-          <% }); %>
+          <% }) %>
         </select>
       </div>
+
       <div class="grid two" style="gap: 12px;">
         <div class="form-group">
-          <label>목표 유형</label>
+          <label for="targetType">목표 유형</label>
           <select id="targetType">
             <option value="REPS">횟수</option>
             <option value="TIME">시간(초)</option>
           </select>
         </div>
         <div class="form-group">
-          <label>목표 값</label>
+          <label for="targetValue">목표 값</label>
           <input type="number" id="targetValue" value="10" min="1" />
         </div>
         <div class="form-group">
-          <label>세트 수</label>
+          <label for="setsCount">세트 수</label>
           <input type="number" id="setsCount" value="3" min="1" />
         </div>
         <div class="form-group">
-          <label>휴식 시간(초)</label>
+          <label for="restSec">휴식 시간(초)</label>
           <input type="number" id="restSec" value="30" min="0" />
         </div>
       </div>
+
       <button type="button" class="primary full" onclick="addStep()">+ 운동 추가</button>
     </div>
   </form>
 
-  <!-- 운동 순서 -->
   <div class="card">
     <div class="card-header">
       <h3>운동 순서</h3>
       <span class="muted" id="stepCount">0개의 운동</span>
     </div>
-    
     <div id="stepsList" class="step-list">
       <p class="muted" id="emptyMessage">운동을 추가해주세요</p>
     </div>
   </div>
 
-  <!-- 저장 버튼 -->
   <div class="card" style="flex-direction: row; justify-content: flex-end; gap: 10px;">
     <a href="/routine" class="ghost">취소</a>
     <button type="button" class="primary" onclick="saveRoutine()">
@@ -90,12 +91,12 @@
   .form-select,
   .form-group select,
   .form-group input {
+    width: 100%;
     padding: 10px 12px;
     border-radius: 12px;
     border: 1px solid var(--border);
-    background: var(--input-bg, #f8fafc);
+    background: var(--input-bg);
     color: var(--text);
-    width: 100%;
   }
 
   .step-list {
@@ -108,10 +109,10 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 16px;
-    background: var(--input-bg, #f8fafc);
+    padding: 14px;
     border-radius: 12px;
     border: 1px solid var(--border);
+    background: var(--input-bg);
   }
 
   .step-order {
@@ -119,7 +120,7 @@
     height: 32px;
     border-radius: 50%;
     background: var(--primary);
-    color: white;
+    color: #fff;
     display: grid;
     place-items: center;
     font-weight: 700;
@@ -167,50 +168,86 @@
 </style>
 
 <script>
-  const exercises = <%- JSON.stringify(exercises) %>;
+  const exercises = <%- JSON.stringify(exercises || []) %>;
   const existingRoutine = <%- routine ? JSON.stringify(routine) : 'null' %>;
-  const isNew = <%= isNew %>;
-  
+  const isNew = <%= isNew ? 'true' : 'false' %>;
+
   let steps = [];
 
-  // 기존 루틴 데이터 로드
-  if (existingRoutine && existingRoutine.routine_setup) {
-    steps = existingRoutine.routine_setup.map(s => ({
-      exercise_id: s.exercise.exercise_id,
-      exercise_name: s.exercise.name,
-      target_type: s.target_type,
-      target_value: s.target_value,
-      sets: s.sets,
-      rest_sec: s.rest_sec
-    }));
+  const getUnitLabel = (targetType) => (targetType === 'TIME' ? '초' : '회');
+
+  function normalizeTargetType(value) {
+    const normalized = String(value || '').toUpperCase();
+    if (normalized === 'DURATION') return 'TIME';
+    return normalized === 'TIME' ? 'TIME' : 'REPS';
+  }
+
+  function clampInt(value, fallback, min) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.round(parsed));
+  }
+
+  function hydrateExistingRoutine() {
+    if (!existingRoutine || !Array.isArray(existingRoutine.routine_setup)) return;
+
+    steps = existingRoutine.routine_setup.map((step) => ({
+      exercise_id: Number(step.exercise?.exercise_id || 0),
+      exercise_name: step.exercise?.name || '운동',
+      target_type: normalizeTargetType(step.target_type),
+      target_value: clampInt(step.target_value, 10, 1),
+      sets: clampInt(step.sets, 3, 1),
+      rest_sec: clampInt(step.rest_sec, 30, 0)
+    })).filter((step) => step.exercise_id > 0);
+
     renderSteps();
+  }
+
+  function applyExerciseDefaultTarget() {
+    const select = document.getElementById('exerciseSelect');
+    const targetTypeEl = document.getElementById('targetType');
+    if (!select || !targetTypeEl) return;
+
+    const option = select.options[select.selectedIndex];
+    if (!option) return;
+
+    const defaultTarget = normalizeTargetType(option.dataset.defaultTarget);
+    targetTypeEl.value = defaultTarget;
+
+    const targetValueEl = document.getElementById('targetValue');
+    if (targetValueEl && Number(targetValueEl.value) <= 0) {
+      targetValueEl.value = defaultTarget === 'TIME' ? '30' : '10';
+    }
   }
 
   function addStep() {
     const select = document.getElementById('exerciseSelect');
-    const exerciseId = select.value;
-    const exerciseName = select.options[select.selectedIndex].dataset.name;
+    const selectedId = Number(select.value);
+    const selectedOption = select.options[select.selectedIndex];
 
-    if (!exerciseId) {
-      alert('운동을 선택해주세요');
+    if (!Number.isFinite(selectedId) || selectedId <= 0 || !selectedOption) {
+      alert('운동을 선택해주세요.');
       return;
     }
 
-    const step = {
-      exercise_id: exerciseId,
-      exercise_name: exerciseName,
-      target_type: document.getElementById('targetType').value,
-      target_value: parseInt(document.getElementById('targetValue').value) || 10,
-      sets: parseInt(document.getElementById('setsCount').value) || 3,
-      rest_sec: parseInt(document.getElementById('restSec').value) || 30
-    };
+    const targetType = normalizeTargetType(document.getElementById('targetType').value);
+    const targetValue = clampInt(document.getElementById('targetValue').value, targetType === 'TIME' ? 30 : 10, 1);
+    const sets = clampInt(document.getElementById('setsCount').value, 3, 1);
+    const restSec = clampInt(document.getElementById('restSec').value, 30, 0);
 
-    steps.push(step);
+    steps.push({
+      exercise_id: selectedId,
+      exercise_name: selectedOption.dataset.name || '운동',
+      target_type: targetType,
+      target_value: targetValue,
+      sets,
+      rest_sec: restSec
+    });
+
     renderSteps();
 
-    // 입력 초기화
     select.value = '';
-    document.getElementById('targetValue').value = '10';
+    document.getElementById('targetValue').value = targetType === 'TIME' ? '30' : '10';
     document.getElementById('setsCount').value = '3';
     document.getElementById('restSec').value = '30';
   }
@@ -221,70 +258,68 @@
   }
 
   function moveStep(index, direction) {
-    const newIndex = index + direction;
-    if (newIndex < 0 || newIndex >= steps.length) return;
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= steps.length) return;
 
     const temp = steps[index];
-    steps[index] = steps[newIndex];
-    steps[newIndex] = temp;
+    steps[index] = steps[nextIndex];
+    steps[nextIndex] = temp;
     renderSteps();
   }
 
   function renderSteps() {
     const container = document.getElementById('stepsList');
-    const emptyMsg = document.getElementById('emptyMessage');
-    const countEl = document.getElementById('stepCount');
+    const stepCountEl = document.getElementById('stepCount');
 
-    if (steps.length === 0) {
-      emptyMsg.style.display = 'block';
+    if (!steps.length) {
       container.innerHTML = '<p class="muted" id="emptyMessage">운동을 추가해주세요</p>';
-      countEl.textContent = '0개의 운동';
+      stepCountEl.textContent = '0개의 운동';
       return;
     }
 
-    countEl.textContent = `${steps.length}개의 운동`;
-    
-    container.innerHTML = steps.map((step, index) => `
-      <div class="step-item" data-index="${index}">
-        <div class="step-order">${index + 1}</div>
-        <div class="step-info">
-          <h4>${step.exercise_name}</h4>
-          <p class="muted">
-            ${step.target_type === 'REPS' ? step.target_value + '회' : step.target_value + '초'}
-            × ${step.sets}세트
-            ${step.rest_sec > 0 ? `(휴식 ${step.rest_sec}초)` : ''}
-          </p>
+    stepCountEl.textContent = `${steps.length}개의 운동`;
+    container.innerHTML = steps.map((step, index) => {
+      const targetLabel = `${step.target_value}${getUnitLabel(step.target_type)}`;
+      const restLabel = step.rest_sec > 0 ? `(휴식 ${step.rest_sec}초)` : '';
+
+      return `
+        <div class="step-item" data-index="${index}">
+          <div class="step-order">${index + 1}</div>
+          <div class="step-info">
+            <h4>${step.exercise_name}</h4>
+            <p class="muted">${targetLabel} × ${step.sets}세트 ${restLabel}</p>
+          </div>
+          <div class="step-actions">
+            <button type="button" class="move-btn" onclick="moveStep(${index}, -1)" ${index === 0 ? 'disabled' : ''}>↑</button>
+            <button type="button" class="move-btn" onclick="moveStep(${index}, 1)" ${index === steps.length - 1 ? 'disabled' : ''}>↓</button>
+            <button type="button" class="remove-btn" onclick="removeStep(${index})">✕</button>
+          </div>
         </div>
-        <div class="step-actions">
-          <button type="button" class="move-btn" onclick="moveStep(${index}, -1)" ${index === 0 ? 'disabled' : ''}>↑</button>
-          <button type="button" class="move-btn" onclick="moveStep(${index}, 1)" ${index === steps.length - 1 ? 'disabled' : ''}>↓</button>
-          <button type="button" class="remove-btn" onclick="removeStep(${index})">✕</button>
-        </div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
   }
 
   async function saveRoutine() {
-    const name = document.getElementById('routineName').value.trim();
+    const name = String(document.getElementById('routineName').value || '').trim();
 
     if (!name) {
-      alert('루틴 이름을 입력해주세요');
+      alert('루틴 이름을 입력해주세요.');
       return;
     }
 
-    if (steps.length === 0) {
-      alert('최소 1개의 운동을 추가해주세요');
+    if (!steps.length) {
+      alert('최소 1개의 운동을 추가해주세요.');
       return;
     }
 
     const payload = {
       name,
-      steps: steps.map(s => ({
-        exercise_id: s.exercise_id,
-        target_type: s.target_type,
-        target_value: s.target_value,
-        sets: s.sets,
-        rest_sec: s.rest_sec
+      steps: steps.map((step) => ({
+        exercise_id: step.exercise_id,
+        target_type: step.target_type,
+        target_value: step.target_value,
+        sets: step.sets,
+        rest_sec: step.rest_sec
       }))
     };
 
@@ -298,16 +333,25 @@
         body: JSON.stringify(payload)
       });
 
-      const data = await response.json();
-
-      if (response.ok) {
-        window.location.href = '/routine';
-      } else {
-        alert(data.error || '저장에 실패했습니다');
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) {
+        alert(data.error || '저장에 실패했습니다.');
+        return;
       }
+
+      window.location.href = '/routine';
     } catch (error) {
-      console.error('Save error:', error);
-      alert('저장에 실패했습니다');
+      console.error('Save routine failed:', error);
+      alert('저장 중 오류가 발생했습니다.');
     }
   }
+
+  document.getElementById('exerciseSelect').addEventListener('change', applyExerciseDefaultTarget);
+  hydrateExistingRoutine();
+
+  window.addStep = addStep;
+  window.removeStep = removeStep;
+  window.moveStep = moveStep;
+  window.saveRoutine = saveRoutine;
 </script>
+
