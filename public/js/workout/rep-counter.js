@@ -18,6 +18,12 @@ const REP_PHASES = {
   LOCKOUT: 'LOCKOUT'
 };
 
+const TIME_PHASES = {
+  SETUP: 'SETUP',
+  HOLD: 'HOLD',
+  BREAK: 'BREAK'
+};
+
 class RepCounter {
   /**
    * @param {string} exerciseCode - 운동 코드 (squat, pushup, lunge 등)
@@ -59,6 +65,27 @@ class RepCounter {
     this.bottomStableFrames = 0;
     this.bottomReached = false;
     this.ascentStarted = false;
+
+    // 시간 기반 운동 상태
+    this.targetSec = 0;
+    this.timeState = {
+      currentPhase: TIME_PHASES.SETUP,
+      currentSegmentStartTime: null,
+      holdStableStartTime: null,
+      holdStartTime: null,
+      breakStartTime: null,
+      currentSegmentMs: 0,
+      currentHoldMs: 0,
+      bestHoldMs: 0,
+      bestHoldPostureScore: 0,
+      currentHoldScoreSum: 0,
+      currentHoldScoreCount: 0,
+      lastScore: 0,
+      breakReason: null
+    };
+    if (this.pattern.isTimeBased) {
+      this.currentPhase = TIME_PHASES.SETUP;
+    }
 
     // 콜백
     this.onRepComplete = null;
@@ -130,7 +157,11 @@ class RepCounter {
         primaryAngle: 'spine_angle',
         thresholds: {
           maintain: 15  // 척추가 15도 이내 유지
-        }
+        },
+        setupConfirmMs: 800,
+        breakGraceMs: 400,
+        holdScoreMin: 65,
+        keepHoldScoreMin: 55
       },
 
       // 버피: 복합 동작
@@ -194,7 +225,7 @@ class RepCounter {
    */
   update(angles, currentScore = 0) {
     if (this.pattern.isTimeBased) {
-      return this.updateTimeBased(angles);
+      return this.updateTimeBased(angles, currentScore);
     }
 
     const primaryAngle = this.getAngleValue(angles, this.pattern.primaryAngle);
@@ -440,6 +471,11 @@ class RepCounter {
   }
 
   startRepTracking(now) {
+    if (this.pattern.isTimeBased) {
+      this.currentPhase = TIME_PHASES.SETUP;
+      return;
+    }
+
     if (this.exerciseModule?.startRepTracking) {
       this.exerciseModule.startRepTracking(this, now);
       return;
@@ -454,6 +490,11 @@ class RepCounter {
   }
 
   resetRepTracking() {
+    if (this.pattern.isTimeBased) {
+      this.currentPhase = TIME_PHASES.SETUP;
+      return;
+    }
+
     if (this.exerciseModule?.resetRepTracking) {
       this.exerciseModule.resetRepTracking(this);
       return;
@@ -535,18 +576,130 @@ class RepCounter {
     return 0.7;
   }
 
-  /**
-   * 시간 기반 운동 (플랭크 등)
-   */
-  updateTimeBased(angles) {
-    // 플랭크 등 자세 유지 운동은 시간으로 측정
-    // 여기서는 자세 유지 여부만 반환
-    const spineAngle = angles.spine || 0;
-    const isHolding = spineAngle <= this.pattern.thresholds.maintain;
+  updateTimeBased(angles, currentScore = 0) {
+    const now = performance.now();
+    const safeScore = Number.isFinite(currentScore) ? Math.max(0, Math.min(100, currentScore)) : 0;
+    const holdScoreMin = this.pattern.holdScoreMin || 65;
+    const keepHoldScoreMin = this.pattern.keepHoldScoreMin || 55;
+    const setupConfirmMs = this.pattern.setupConfirmMs || 800;
+    const state = this.timeState;
 
+    if (state.currentPhase === TIME_PHASES.BREAK || state.currentSegmentStartTime == null) {
+      state.currentPhase = TIME_PHASES.SETUP;
+      state.currentSegmentStartTime = now;
+      state.holdStableStartTime = null;
+      state.holdStartTime = null;
+      state.breakStartTime = null;
+      state.currentSegmentMs = 0;
+      state.currentHoldMs = 0;
+      state.currentHoldScoreSum = 0;
+      state.currentHoldScoreCount = 0;
+      state.breakReason = null;
+    }
+
+    state.currentSegmentMs = Math.max(0, now - state.currentSegmentStartTime);
+    state.lastScore = safeScore;
+    this.currentPhase = state.currentPhase;
+
+    if (state.currentPhase === TIME_PHASES.SETUP) {
+      if (safeScore >= holdScoreMin) {
+        if (state.holdStableStartTime == null) {
+          state.holdStableStartTime = now;
+        }
+
+        if (now - state.holdStableStartTime >= setupConfirmMs) {
+          state.currentPhase = TIME_PHASES.HOLD;
+          state.holdStartTime = state.holdStableStartTime;
+          state.currentHoldMs = Math.max(0, now - state.holdStartTime);
+          state.currentHoldScoreSum = safeScore;
+          state.currentHoldScoreCount = 1;
+          this.currentPhase = state.currentPhase;
+        }
+      } else {
+        state.holdStableStartTime = null;
+      }
+
+      return this.getTimeSummary();
+    }
+
+    if (state.currentPhase === TIME_PHASES.HOLD) {
+      if (safeScore >= keepHoldScoreMin) {
+        state.breakStartTime = null;
+      } else if (state.breakStartTime == null) {
+        state.breakStartTime = now;
+      }
+
+      if (state.breakStartTime != null && (now - state.breakStartTime) >= (this.pattern.breakGraceMs || 400)) {
+        this.handleTimeBreak('SCORE_DROP', now);
+        return this.getTimeSummary();
+      }
+
+      state.currentHoldMs = Math.max(0, now - (state.holdStartTime || now));
+      state.currentHoldScoreSum += safeScore;
+      state.currentHoldScoreCount += 1;
+
+      if (state.currentHoldMs >= state.bestHoldMs) {
+        state.bestHoldMs = state.currentHoldMs;
+        state.bestHoldPostureScore = state.currentHoldScoreCount > 0
+          ? Math.round(state.currentHoldScoreSum / state.currentHoldScoreCount)
+          : state.bestHoldPostureScore;
+      }
+
+      return this.getTimeSummary();
+    }
+
+    return this.getTimeSummary();
+  }
+
+  setTargetSec(targetSec) {
+    const parsed = Number(targetSec);
+    this.targetSec = Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : 0;
+  }
+
+  handleTimeBreak(reason = 'BREAK', now = performance.now()) {
+    if (!this.pattern.isTimeBased) return;
+
+    const state = this.timeState;
+    state.breakReason = reason;
+    state.breakStartTime = now;
+    state.currentPhase = TIME_PHASES.BREAK;
+    state.currentSegmentStartTime = null;
+    state.holdStableStartTime = null;
+    state.holdStartTime = null;
+    state.currentSegmentMs = 0;
+    state.currentHoldMs = 0;
+    state.currentHoldScoreSum = 0;
+    state.currentHoldScoreCount = 0;
+    this.currentPhase = state.currentPhase;
+  }
+
+  getCurrentSegmentSec() {
+    return Math.max(0, Math.floor((this.timeState.currentSegmentMs || 0) / 1000));
+  }
+
+  getCurrentHoldSec() {
+    return Math.max(0, Math.floor((this.timeState.currentHoldMs || 0) / 1000));
+  }
+
+  getBestHoldSec() {
+    return Math.max(0, Math.floor((this.timeState.bestHoldMs || 0) / 1000));
+  }
+
+  getBestHoldPostureScore() {
+    return Math.max(0, Math.min(100, Math.round(this.timeState.bestHoldPostureScore || 0)));
+  }
+
+  getTimeSummary() {
     return {
-      isHolding,
-      angle: spineAngle
+      currentPhase: this.timeState.currentPhase,
+      currentSegmentMs: Math.round(this.timeState.currentSegmentMs || 0),
+      currentHoldMs: Math.round(this.timeState.currentHoldMs || 0),
+      bestHoldMs: Math.round(this.timeState.bestHoldMs || 0),
+      bestHoldSec: this.getBestHoldSec(),
+      bestHoldPostureScore: this.getBestHoldPostureScore(),
+      targetSec: this.targetSec || 0,
+      lastScore: this.timeState.lastScore || 0,
+      breakReason: this.timeState.breakReason || null
     };
   }
 
@@ -612,6 +765,25 @@ class RepCounter {
     this.currentMovementScores = [];
     this.lastCompletedRepScore = 0;
     this.previousPrimaryAngle = null;
+    this.targetSec = 0;
+    this.timeState = {
+      currentPhase: TIME_PHASES.SETUP,
+      currentSegmentStartTime: null,
+      holdStableStartTime: null,
+      holdStartTime: null,
+      breakStartTime: null,
+      currentSegmentMs: 0,
+      currentHoldMs: 0,
+      bestHoldMs: 0,
+      bestHoldPostureScore: 0,
+      currentHoldScoreSum: 0,
+      currentHoldScoreCount: 0,
+      lastScore: 0,
+      breakReason: null
+    };
+    if (this.pattern.isTimeBased) {
+      this.currentPhase = TIME_PHASES.SETUP;
+    }
     this.resetRepTracking();
   }
 }
@@ -620,3 +792,4 @@ class RepCounter {
 window.RepCounter = RepCounter;
 window.REP_STATES = REP_STATES;
 window.REP_PHASES = REP_PHASES;
+window.TIME_PHASES = TIME_PHASES;

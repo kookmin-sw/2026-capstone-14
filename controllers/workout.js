@@ -876,7 +876,8 @@ const getFreeWorkoutPage = async (req, res, next) => {
             .from('exercise')
             .select('exercise_id, code, name, description, default_target_type')
             .eq('is_active', true)
-            .order('name');
+            .order('sort_order', { ascending: true })
+            .order('name', { ascending: true });
 
         if (error) throw error;
 
@@ -1849,7 +1850,8 @@ const getExercises = async (req, res, next) => {
             .from('exercise')
             .select('exercise_id, code, name, description, default_target_type')
             .eq('is_active', true)
-            .order('name');
+            .order('sort_order', { ascending: true })
+            .order('name', { ascending: true });
 
         if (error) throw error;
 

@@ -184,6 +184,14 @@ class ScoringEngine {
         const right = angles.rightElbow;
         return combineAngles(left, right, { preferHighOnMismatch: true });
       },
+      'elbow_support_angle': () => {
+        const left = angles.leftElbow;
+        const right = angles.rightElbow;
+        if (left == null && right == null) return null;
+        if (left == null) return right;
+        if (right == null) return left;
+        return Math.min(left, right);
+      },
       'left_elbow_angle': () => angles.leftElbow,
       'right_elbow_angle': () => angles.rightElbow,
 
@@ -526,6 +534,10 @@ class ScoringEngine {
       'elbow_angle': {
         low: '팔을 더 굽혀주세요',
         high: '팔을 조금 펴주세요'
+      },
+      'elbow_support_angle': {
+        low: '팔꿈치가 몸 아래로 너무 접히지 않게 전완과 상완 각도를 조금 더 여유 있게 유지해주세요',
+        high: '좋은 전완 지지 각도입니다'
       },
       'shoulder_angle': {
         low: '팔을 더 올려주세요',

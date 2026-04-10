@@ -1,4 +1,26 @@
 <div class="page active">
+  <%
+    const isDurationBased = String(session.result_basis || '').toUpperCase() === 'DURATION' || String(session.total_result_unit || '').toUpperCase() === 'SEC';
+    const formatDurationValue = (totalSeconds) => {
+      const safeSeconds = Math.max(0, Number(totalSeconds) || 0);
+      const mins = Math.floor(safeSeconds / 60);
+      const secs = safeSeconds % 60;
+      if (mins > 0) {
+        return `${mins}분 ${secs}초`;
+      }
+      return `${secs}초`;
+    };
+    const resultLabel = isDurationBased ? '유지 시간' : '총 횟수';
+    const durationResultValue = Number.isFinite(Number(session.total_result_value))
+      ? Number(session.total_result_value)
+      : (Number(session.duration_sec) || 0);
+    const resultValue = isDurationBased
+      ? formatDurationValue(durationResultValue)
+      : `${session.total_result_value || session.total_reps || 0}회`;
+    const resultNote = isDurationBased
+      ? '목표 시간 대비 유지 기록'
+      : '세션에서 완료한 총 반복 수';
+  %>
   <section class="page-header">
     <div>
       <h1>운동 완료!</h1>
@@ -17,6 +39,9 @@
       <div class="summary-lines">
         <p><%= session.summary_feedback || '운동을 완료했습니다!' %></p>
       </div>
+      <% if (isDurationBased) { %>
+        <span class="badge" style="background: #38bdf8;">시간 기반 기록</span>
+      <% } %>
       <% if (session.final_score >= 80) { %>
         <span class="badge" style="background: #22c55e;">훌륭해요!</span>
       <% } else if (session.final_score >= 60) { %>
@@ -41,14 +66,8 @@
           </strong>
         </div>
         <div class="stat">
-          <span>총 횟수</span>
-          <strong>
-            <% if ((session.result_basis === 'REPS' || session.total_result_unit === 'COUNT')) { %>
-              <%= session.total_result_value || session.total_reps || 0 %>회
-            <% } else { %>
-              -
-            <% } %>
-          </strong>
+          <span><%= resultLabel %></span>
+          <strong><%= resultValue %></strong>
         </div>
         <div class="stat">
           <span>선택 자세</span>
@@ -61,6 +80,10 @@
         <div class="stat">
           <span>운동 모드</span>
           <strong><%= session.mode === 'ROUTINE' ? '루틴' : '자율' %></strong>
+        </div>
+        <div class="stat">
+          <span>기록 설명</span>
+          <strong><%= resultNote %></strong>
         </div>
       </div>
     </div>

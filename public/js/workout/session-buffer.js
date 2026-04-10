@@ -11,6 +11,7 @@ class SessionBuffer {
     this.mode = (options.mode || 'FREE').toString().trim().toUpperCase();
     this.selectedView = this.normalizeViewCode(options.selectedView);
     this.resultBasisHint = this.normalizeResultBasis(options.resultBasis);
+    this.targetSec = this.normalizePositiveInt(options.targetSec);
 
     // 점수 타임라인 (1초당 1개 샘플링)
     this.scoreTimeline = [];
@@ -46,6 +47,18 @@ class SessionBuffer {
   normalizeResultBasis(resultBasis) {
     const normalized = (resultBasis || '').toString().trim().toUpperCase();
     return ['REPS', 'DURATION'].includes(normalized) ? normalized : null;
+  }
+
+  normalizePositiveInt(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return Math.round(parsed);
+  }
+
+  normalizeNonNegativeInt(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return null;
+    return Math.round(parsed);
   }
 
   /**
@@ -357,6 +370,13 @@ class SessionBuffer {
     };
   }
 
+  calculateTimeScore(bestHoldSec, targetSec) {
+    const best = this.normalizePositiveInt(bestHoldSec) || 0;
+    const target = this.normalizePositiveInt(targetSec) || 0;
+    if (target <= 0) return 0;
+    return Math.max(0, Math.min(100, Math.round((best / target) * 100)));
+  }
+
   generateInterimSnapshots() {
     return this.scoreTimeline.map((item) => ({
       timestamp_ms: item.timestamp,
@@ -364,18 +384,44 @@ class SessionBuffer {
     }));
   }
 
-  export() {
-    const finalScore = this.calculateFinalScore();
-    const resultPayload = this.getResultPayload();
+  export(options = {}) {
+    const isTimeBased = options.isTimeBased === true || this.resultBasisHint === 'DURATION';
+    const bestHoldSec = this.normalizePositiveInt(options.bestHoldSec) || 0;
+    const targetSec = this.normalizePositiveInt(options.targetSec) || this.targetSec || 0;
+    const normalizedPostureScore = this.normalizeNonNegativeInt(options.bestHoldPostureScore);
+    const postureScore = normalizedPostureScore != null ? normalizedPostureScore : this.calculateFinalScore();
+    const timeScore = isTimeBased ? this.calculateTimeScore(bestHoldSec, targetSec) : 0;
+    const finalScore = isTimeBased
+      ? Math.max(0, Math.min(100, Math.round((postureScore * 0.8) + (timeScore * 0.2))))
+      : this.calculateFinalScore();
+    const resultPayload = isTimeBased
+      ? {
+          result_basis: 'DURATION',
+          total_result_value: bestHoldSec,
+          total_result_unit: 'SEC',
+          duration_sec: this.getDuration(),
+          total_reps: 0
+        }
+      : this.getResultPayload();
 
     const interimSnapshots = this.generateInterimSnapshots();
 
     return {
       // 기본 세션 정보
       selected_view: this.selectedView,
+      target_sec: targetSec || null,
+      best_hold_sec: isTimeBased ? bestHoldSec : null,
+      posture_score: postureScore,
+      time_score: isTimeBased ? timeScore : null,
       ...resultPayload,
       final_score: finalScore,
-      summary_feedback: this.generateSummaryFeedback(finalScore),
+      summary_feedback: this.generateSummaryFeedback(finalScore, {
+        isTimeBased,
+        bestHoldSec,
+        targetSec,
+        postureScore,
+        timeScore
+      }),
 
       // 별도 테이블용 데이터 (서버에서 처리)
       metric_results: this.generateMetricResults(),
@@ -406,9 +452,12 @@ class SessionBuffer {
   /**
    * 요약 피드백 생성
    */
-  generateSummaryFeedback(score) {
+  generateSummaryFeedback(score, options = {}) {
     const reps = this.getTotalReps();
     const duration = this.getDuration();
+    const isTimeBased = options.isTimeBased === true;
+    const bestHoldSec = this.normalizePositiveInt(options.bestHoldSec) || 0;
+    const targetSec = this.normalizePositiveInt(options.targetSec) || 0;
 
     let feedback = '';
 
@@ -426,6 +475,15 @@ class SessionBuffer {
     }
 
     // 추가 정보
+    if (isTimeBased) {
+      if (bestHoldSec > 0 && targetSec > 0) {
+        feedback += ` 최고 ${bestHoldSec}초 유지, 목표 ${targetSec}초 기준입니다.`;
+      } else if (duration > 0) {
+        feedback += ` 총 ${duration}초 동안 자세를 유지했습니다.`;
+      }
+      return feedback;
+    }
+
     if (reps > 0) {
       feedback += ` ${reps}회 완료!`;
     }
