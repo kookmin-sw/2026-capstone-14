@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const expressLayouts = require("express-ejs-layouts");
 const cookieParser = require("cookie-parser");
+const { syncExerciseCatalog } = require("./config/exerciseCatalog");
 const { addAuthState } = require("./middleware/auth");
 const { notFound, errorHandler } = require("./middleware/errorHandler");
 
@@ -38,6 +39,17 @@ app.use(notFound); // 404
 app.use(errorHandler);
 
 // 서버 시작
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-});
+const startServer = async () => {
+    try {
+        await syncExerciseCatalog();
+        console.log("Exercise catalog synced");
+    } catch (error) {
+        console.error("Exercise catalog sync failed:", error);
+    }
+
+    app.listen(PORT, () => {
+        console.log(`Server is running on port ${PORT}`);
+    });
+};
+
+startServer();

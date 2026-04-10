@@ -405,3 +405,6 @@ CREATE UNIQUE INDEX uq_quest_assignment_rule_scope_slot_tier
         COALESCE(min_tier, -1),
         COALESCE(max_tier, -1)
     );
+
+-- 운동 메타데이터는 서버 런타임의 exercise catalog sync가
+-- public/js/workout/exercises 디렉터리를 스캔해 자동 생성한다.

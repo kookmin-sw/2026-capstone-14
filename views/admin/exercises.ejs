@@ -1,5 +1,8 @@
 <div class="admin-header">
-    <h1>운동 관리</h1>
+    <div>
+        <h1>운동 관리</h1>
+        <p class="muted" style="margin-top: 8px;">exercise 모듈 파일은 자동 등록되며 기본값은 비활성입니다.</p>
+    </div>
     <button class="btn btn-primary" onclick="document.getElementById('addModal').style.display='flex'">
         + 운동 추가
     </button>
@@ -151,7 +154,7 @@
             </div>
             <div class="form-group">
                 <label class="toggle">
-                    <input type="checkbox" name="is_active" checked />
+                    <input type="checkbox" name="is_active" />
                     <span class="toggle-slider"></span>
                 </label>
                 <span style="margin-left: 12px;">활성화</span>

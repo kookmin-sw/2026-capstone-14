@@ -1,3 +1,14 @@
+/* EXERCISE_MANIFEST
+{
+  "code": "PUSH_UP",
+  "name": "푸쉬업",
+  "description": "상체운동의 기본 푸쉬업",
+  "default_target_type": "REPS",
+  "allowed_views": ["SIDE"],
+  "default_view": "SIDE",
+  "sort_order": 20
+}
+*/
 /**
  * 푸쉬업 전용 rep 추적/채점/품질 게이트
  */

@@ -1,5 +1,6 @@
 const asyncHandler = require('express-async-handler');
 const { supabase } = require('../config/db');
+const { syncExerciseCatalog } = require('../config/exerciseCatalog');
 
 const VIEW_CODES = ['FRONT', 'SIDE', 'DIAGONAL'];
 const TARGET_TYPES = ['REPS', 'TIME'];
@@ -194,6 +195,8 @@ const getDashboard = asyncHandler(async (req, res) => {
 
 // 운동 관리
 const getExercises = asyncHandler(async (req, res) => {
+    await syncExerciseCatalog();
+
     const [{ data: exerciseRows, error: exerciseError }, { data: allowedViewRows, error: allowedViewError }] =
         await Promise.all([
             supabase

@@ -1,3 +1,14 @@
+/* EXERCISE_MANIFEST
+{
+  "code": "SQUAT",
+  "name": "스쿼트",
+  "description": "하체운동의 기본 스쿼트",
+  "default_target_type": "REPS",
+  "allowed_views": ["FRONT", "SIDE", "DIAGONAL"],
+  "default_view": "FRONT",
+  "sort_order": 10
+}
+*/
 /**
  * 스쿼트 전용 rep 추적/채점/품질 게이트
  */

@@ -1,4 +1,5 @@
 const { supabase } = require('../config/db');
+const { syncExerciseCatalog } = require('../config/exerciseCatalog');
 const { updateQuestProgress } = require('./quest');
 
 const SESSION_STALE_HOURS = 12;
@@ -869,6 +870,8 @@ const assertSessionWritable = async (sessionId, userId) => {
 
 const getFreeWorkoutPage = async (req, res, next) => {
     try {
+        await syncExerciseCatalog();
+
         const { data: exercises, error } = await supabase
             .from('exercise')
             .select('exercise_id, code, name, description, default_target_type')
@@ -895,6 +898,8 @@ const getFreeWorkoutPage = async (req, res, next) => {
 
 const getFreeWorkoutSession = async (req, res, next) => {
     try {
+        await syncExerciseCatalog();
+
         const { exerciseCode } = req.params;
         const exercise = await getExerciseByCodeWithViews(exerciseCode);
 
@@ -1838,6 +1843,8 @@ const getWorkoutResult = async (req, res, next) => {
 
 const getExercises = async (req, res, next) => {
     try {
+        await syncExerciseCatalog();
+
         const { data: exercises, error } = await supabase
             .from('exercise')
             .select('exercise_id, code, name, description, default_target_type')
