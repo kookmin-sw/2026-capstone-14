@@ -816,16 +816,19 @@
     const category = getMetricCategory(metricKey);
     if (category === 'other') return false;
 
-    if (phase === REP_PHASES.LOCKOUT) {
-      return category === 'lockout' || category === 'body' || category === 'torso';
+    // 기본 평가는 모든 phase에 적용
+    if (category === 'body' || category === 'torso') {
+      return true;
     }
 
-    if (phase === REP_PHASES.DESCENT || phase === REP_PHASES.BOTTOM) {
-      return category === 'depth' || category === 'body' || category === 'torso';
+    // 완전히 내려갔을 때가 중요한 깊이 평가는 BOTTOM에서만 적용
+    if (category === 'depth') {
+      return phase === REP_PHASES.BOTTOM;
     }
 
-    if (phase === REP_PHASES.ASCENT) {
-      return category === 'lockout' || category === 'body' || category === 'torso';
+    // 팔을 쭉 펴는 평가는 LOCKOUT에서만 적용
+    if (category === 'lockout') {
+      return phase === REP_PHASES.LOCKOUT;
     }
 
     return false;
@@ -843,17 +846,16 @@
   }
 
   function calculateLiveScore(breakdown, fallbackScore) {
-    let weightedScore = 0;
-    let totalWeight = 0;
+    let scoreSum = 0;
+    let maxScoreSum = 0;
 
     for (const item of breakdown) {
-      if (!Number.isFinite(item?.score)) continue;
-      const weight = Number.isFinite(item?.weight) && item.weight > 0 ? item.weight : 1;
-      weightedScore += item.score * weight;
-      totalWeight += weight;
+      if (!Number.isFinite(item?.score) || !Number.isFinite(item?.maxScore)) continue;
+      scoreSum += item.score;
+      maxScoreSum += item.maxScore;
     }
 
-    return totalWeight > 0 ? Math.round(weightedScore / totalWeight) : fallbackScore;
+    return maxScoreSum > 0 ? Math.round((scoreSum / maxScoreSum) * 100) : fallbackScore;
   }
 
   registry.register('push_up', pushUpExercise);

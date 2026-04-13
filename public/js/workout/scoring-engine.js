@@ -88,12 +88,12 @@ class ScoringEngine {
           this.generateFeedback(metric.key, actualValue, rule) : null
       });
 
-      totalScore += metricScore * pm.weight;
-      totalWeight += pm.weight;
+      totalScore += metricScore;
+      totalWeight += pm.max_score;
     }
 
     const finalScore = totalWeight > 0
-      ? Math.round(totalScore / totalWeight)
+      ? Math.round((totalScore / totalWeight) * 100)
       : 0;
 
     // 히스토리에 추가
@@ -520,8 +520,8 @@ class ScoringEngine {
         high: '너무 깊습니다, 조금만 일어나세요'
       },
       'hip_angle': {
-        low: '엉덩이를 더 뒤로 빼주세요',
-        high: '엉덩이가 너무 뒤에 있어요'
+        low: '상체를 너무 숙였습니다. 가슴을 세워주세요',
+        high: '엉덩이를 더 뒤로 빼며 앉아주세요'
       },
       'spine_angle': {
         low: '등을 더 곧게 펴주세요',

@@ -767,8 +767,10 @@ class PoseEngine {
    */
   drawLandmarks(ctx, landmarks, width, height) {
     landmarks.forEach((landmark, index) => {
-      // 얼굴 랜드마크는 운동 피드백에 사용하지 않으므로 캔버스에서 제외한다.
+      // 얼굴 랜드마크 및 상세 부위는 캔버스에서 제외한다.
       if (index < LANDMARKS.LEFT_SHOULDER) return;
+      if (index > LANDMARKS.RIGHT_WRIST && index < LANDMARKS.LEFT_HIP) return; // 손가락, 손바닥 부분 제외
+      if (index > LANDMARKS.RIGHT_ANKLE) return; // 발바닥, 발가락 부분 제외
 
       if (landmark.visibility > 0.5) {
         ctx.beginPath();

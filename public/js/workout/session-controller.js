@@ -544,6 +544,11 @@ async function initSession(workoutData) {
       const sourceSelectEl = document.getElementById('sourceSelect');
       if (sourceSelectEl) sourceSelectEl.hidden = true;
       if (viewSelectRoot) viewSelectRoot.hidden = true;
+      if (plankTargetSelectRoot) plankTargetSelectRoot.hidden = true;
+      
+      const setupPanelContainer = document.getElementById('setupPanelContainer');
+      if (setupPanelContainer) setupPanelContainer.classList.add('hidden-during-workout');
+
       pauseBtn.disabled = false;
       finishBtn.disabled = false;
       finishBtn.textContent = '운동 종료';

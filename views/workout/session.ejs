@@ -106,66 +106,69 @@
           </div>
         </div>
 
-        <!-- 입력 소스 선택 (준비 단계) -->
-        <div class="source-select" id="sourceSelect" role="group" aria-label="카메라 입력 소스">
-          <span class="source-select-label muted">입력 소스</span>
-          <div class="source-select-buttons">
-            <button type="button" class="ghost source-btn active" data-source="webcam">웹캠</button>
-            <button type="button" class="ghost source-btn" data-source="screen">화면 공유</button>
-            <button type="button" class="ghost source-btn" data-source="mobile_rear">휴대폰 카메라</button>
-          </div>
-          <p class="source-select-hint muted">휴대폰은 브라우저에서 후면 카메라를 사용합니다. PC에서는 웹캠 또는 화면 공유를 선택하세요.</p>
-        </div>
-
-        <div class="source-select" id="viewSelect" role="group" aria-label="채점 자세 선택">
-          <span class="source-select-label muted">채점 자세</span>
-          <div class="source-select-buttons">
-            <% allowedViews.forEach((viewCode) => { %>
-              <button
-                type="button"
-                class="ghost source-btn <%= viewCode === defaultView ? 'active' : '' %>"
-                data-view="<%= viewCode %>">
-                <%= viewLabels[viewCode] || viewCode %>
-              </button>
-            <% }) %>
-          </div>
-          <p class="source-select-hint muted">운동 시작 전에 허용된 자세 중 하나를 선택하세요. 선택한 자세가 세션 기록과 채점 로직에 함께 반영됩니다.</p>
-        </div>
-
-        <div class="source-select" id="plankTargetSelect" role="group" aria-label="플랭크 목표 시간 선택" data-plank-target-ui <%= isPlankExercise ? '' : 'hidden' %>>
-            <span class="source-select-label muted">목표 시간</span>
-            <div class="source-select-buttons" style="flex-wrap: wrap;">
-              <button type="button" class="ghost source-btn active" data-plank-target-sec="15">15초</button>
-              <button type="button" class="ghost source-btn" data-plank-target-sec="30">30초</button>
-              <button type="button" class="ghost source-btn" data-plank-target-sec="45">45초</button>
-              <button type="button" class="ghost source-btn" data-plank-target-sec="60">60초</button>
-              <button type="button" class="ghost source-btn" data-plank-target-sec="90">90초</button>
+        <!-- 셋업 컨트롤 컨테이너 (운동 시작 시 숨김) -->
+        <div class="setup-panel-container" id="setupPanelContainer">
+          <!-- 입력 소스 선택 (준비 단계) -->
+          <div class="source-select" id="sourceSelect" role="group" aria-label="카메라 입력 소스">
+            <span class="source-select-label muted">입력 소스</span>
+            <div class="source-select-buttons">
+              <button type="button" class="ghost source-btn active" data-source="webcam">웹캠</button>
+              <button type="button" class="ghost source-btn" data-source="screen">화면 공유</button>
+              <button type="button" class="ghost source-btn" data-source="mobile_rear">휴대폰 카메라</button>
             </div>
-            <div class="plank-target-custom" style="margin-top: 14px; display: grid; gap: 8px;">
-              <label for="plankTargetSeconds" class="muted" style="font-size: 13px;">직접 입력</label>
-              <div style="display: flex; gap: 8px; align-items: center;">
-                <input
-                  id="plankTargetSeconds"
-                  name="plank_target_seconds"
-                  type="number"
-                  min="10"
-                  step="1"
-                  value="30"
-                  class="form-input"
-                  style="max-width: 160px;"
-                  inputmode="numeric"
-                />
-                <span class="muted">초</span>
+            <p class="source-select-hint muted">휴대폰은 브라우저에서 후면 카메라를 사용합니다. PC에서는 웹캠 또는 화면 공유를 선택하세요.</p>
+          </div>
+
+          <div class="source-select" id="viewSelect" role="group" aria-label="채점 자세 선택">
+            <span class="source-select-label muted">채점 자세</span>
+            <div class="source-select-buttons">
+              <% allowedViews.forEach((viewCode) => { %>
+                <button
+                  type="button"
+                  class="ghost source-btn <%= viewCode === defaultView ? 'active' : '' %>"
+                  data-view="<%= viewCode %>">
+                  <%= viewLabels[viewCode] || viewCode %>
+                </button>
+              <% }) %>
+            </div>
+            <p class="source-select-hint muted">운동 시작 전에 허용된 자세 중 하나를 선택하세요. 선택한 자세가 세션 기록과 채점 로직에 함께 반영됩니다.</p>
+          </div>
+
+          <div class="source-select" id="plankTargetSelect" role="group" aria-label="플랭크 목표 시간 선택" data-plank-target-ui <%= isPlankExercise ? '' : 'hidden' %>>
+              <span class="source-select-label muted">목표 시간</span>
+              <div class="source-select-buttons" style="flex-wrap: wrap;">
+                <button type="button" class="ghost source-btn active" data-plank-target-sec="15">15초</button>
+                <button type="button" class="ghost source-btn" data-plank-target-sec="30">30초</button>
+                <button type="button" class="ghost source-btn" data-plank-target-sec="45">45초</button>
+                <button type="button" class="ghost source-btn" data-plank-target-sec="60">60초</button>
+                <button type="button" class="ghost source-btn" data-plank-target-sec="90">90초</button>
               </div>
-              <p class="source-select-hint muted" id="plankTargetHint">플랭크는 목표 시간을 먼저 정한 뒤 시작합니다. 목표 시간은 세션 종료 시 점수 정규화 기준이 됩니다.</p>
-            </div>
-        </div>
+              <div class="plank-target-custom" style="margin-top: 14px; display: grid; gap: 8px;">
+                <label for="plankTargetSeconds" class="muted" style="font-size: 13px;">직접 입력</label>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <input
+                    id="plankTargetSeconds"
+                    name="plank_target_seconds"
+                    type="number"
+                    min="10"
+                    step="1"
+                    value="30"
+                    class="form-input"
+                    style="max-width: 160px;"
+                    inputmode="numeric"
+                  />
+                  <span class="muted">초</span>
+                </div>
+                <p class="source-select-hint muted" id="plankTargetHint">플랭크는 목표 시간을 먼저 정한 뒤 시작합니다. 목표 시간은 세션 종료 시 점수 정규화 기준이 됩니다.</p>
+              </div>
+          </div>
 
-        <!-- 카메라 컨트롤 -->
-        <div class="camera-actions" id="cameraActions">
-          <button class="primary" id="startBtn" onclick="startWorkout()" disabled>
-            운동 시작
-          </button>
+          <!-- 카메라 컨트롤 -->
+          <div class="camera-actions" id="cameraActions">
+            <button class="primary" id="startBtn" onclick="startWorkout()" disabled>
+              운동 시작
+            </button>
+          </div>
         </div>
       </div>
 

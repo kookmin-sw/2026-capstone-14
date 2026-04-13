@@ -44,7 +44,7 @@
         {
           weight: 0.2,
           max_score: 20,
-          rule: { ideal_min: 95, ideal_max: 135, acceptable_min: 80, acceptable_max: 155 },
+          rule: { ideal_min: 60, ideal_max: 120, acceptable_min: 45, acceptable_max: 140 },
           metric: {
             metric_id: 'squat_hip_angle',
             key: 'hip_angle',
@@ -55,7 +55,7 @@
         {
           weight: 0.2,
           max_score: 20,
-          rule: { ideal_min: 0, ideal_max: 25, acceptable_min: 0, acceptable_max: 45 },
+          rule: { ideal_min: 0, ideal_max: 50, acceptable_min: 0, acceptable_max: 65 },
           metric: {
             metric_id: 'squat_spine_angle',
             key: 'spine_angle',
@@ -263,14 +263,15 @@
         if (!Number.isFinite(normalizedScore)) continue;
 
         const metric = scoringEngine.getProfileMetricConfig(item.key, item.title);
-        const score = Math.round((normalizedScore / 100) * metric.maxScore);
+        const dynamicMaxScore = Math.round(item.weight * 100);
+        const score = Math.round((normalizedScore / 100) * dynamicMaxScore);
         breakdown.push({
           metric_id: metric.metric_id,
           key: item.key,
           title: metric.title,
           rawValue: item.rawValue(),
           score,
-          maxScore: metric.maxScore,
+          maxScore: dynamicMaxScore,
           weight: item.weight,
           feedback: normalizedScore < 70 ? item.feedback : null
         });
@@ -745,26 +746,23 @@
     const category = getMetricCategory(metricKey);
     if (category === 'other') return false;
 
-    if (phase === REP_PHASES.LOCKOUT) {
-      return category === 'torso';
+    // 시점(View)에 따른 유효성 필터링: 화면 각도상 정확한 측정이 불가능한 항목 제외
+    if (view === 'FRONT' && category === 'hip') return false;
+    if (view === 'SIDE' && category === 'symmetry') return false;
+
+    // 기본 평가는 모든 phase에 적용
+    if (category === 'torso' || category === 'alignment' || category === 'symmetry') {
+      return true;
     }
 
-    if (phase === REP_PHASES.DESCENT) {
-      return category === 'hip' || category === 'torso';
+    // 힙 힌지는 앉는 동작에서만 중요 (서 있을 때는 각도가 180도이므로 평가 시 무조건 감점됨)
+    if (category === 'hip') {
+      return phase === REP_PHASES.DESCENT || phase === REP_PHASES.BOTTOM;
     }
 
-    if (phase === REP_PHASES.BOTTOM) {
-      if (view === 'FRONT') {
-        return category === 'depth' || category === 'alignment' || category === 'symmetry' || category === 'torso';
-      }
-      return category === 'depth' || category === 'hip' || category === 'alignment' || category === 'torso';
-    }
-
-    if (phase === REP_PHASES.ASCENT) {
-      if (view === 'FRONT') {
-        return category === 'alignment' || category === 'symmetry' || category === 'torso';
-      }
-      return category === 'alignment' || category === 'torso';
+    // 깊이(다리 각도) 평가는 완전히 내려갔을 때(BOTTOM)만 적용
+    if (category === 'depth') {
+      return phase === REP_PHASES.BOTTOM;
     }
 
     return false;
@@ -794,17 +792,16 @@
   }
 
   function calculateLiveScore(breakdown, fallbackScore) {
-    let weightedScore = 0;
-    let totalWeight = 0;
+    let scoreSum = 0;
+    let maxScoreSum = 0;
 
     for (const item of breakdown) {
-      if (!Number.isFinite(item?.score)) continue;
-      const weight = Number.isFinite(item?.weight) && item.weight > 0 ? item.weight : 1;
-      weightedScore += item.score * weight;
-      totalWeight += weight;
+      if (!Number.isFinite(item?.score) || !Number.isFinite(item?.maxScore)) continue;
+      scoreSum += item.score;
+      maxScoreSum += item.maxScore;
     }
 
-    return totalWeight > 0 ? Math.round(weightedScore / totalWeight) : fallbackScore;
+    return maxScoreSum > 0 ? Math.round((scoreSum / maxScoreSum) * 100) : fallbackScore;
   }
 
   registry.register('squat', squatExercise);

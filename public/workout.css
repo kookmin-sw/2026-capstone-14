@@ -92,25 +92,29 @@
   gap: 16px;
   height: 100%;
   flex: 1;
+  align-items: center;
 }
 
 .camera-frame {
   position: relative;
-  background: #1e293b;
-  border-radius: 20px;
+  background: #000;
+  border-radius: 24px;
   overflow: hidden;
-  flex: 1;
   min-height: 0;
+  width: 100%;
+  flex-grow: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 2px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 0 40px rgba(91, 108, 255, 0.08);
+  transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .camera-frame video {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   transform: scaleX(-1);
 }
 
@@ -149,6 +153,27 @@
   display: flex;
   gap: 12px;
   justify-content: center;
+}
+
+/* 셋업 패널 전환 애니메이션 */
+.setup-panel-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 800px;
+  overflow: hidden;
+  transition: max-height 0.6s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.4s ease, margin 0.4s ease;
+  max-height: 800px;
+  opacity: 1;
+  margin-bottom: 20px;
+}
+
+.setup-panel-container.hidden-during-workout {
+  max-height: 0;
+  opacity: 0;
+  margin-bottom: 0;
+  pointer-events: none;
 }
 
 /* 세션: 입력 소스 선택 */
@@ -260,8 +285,12 @@
 }
 
 .workout-sidebar .card {
-  background: #1e293b;
-  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(30, 41, 59, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  border-radius: 16px;
 }
 
 .workout-sidebar h3,
