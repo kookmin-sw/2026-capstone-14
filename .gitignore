@@ -122,3 +122,6 @@ message.txt
 .codex/
 .serena/
 AGENTS.md
+.opencode/
+graphify-out/
+opencode.json
