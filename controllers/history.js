@@ -181,6 +181,72 @@ const buildTimelineFromSnapshots = ({
     return rows.sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
 };
 
+const buildMetricSeries = ({ startedAt, snapshots = [], metricRows = [] }) => {
+    if (!Array.isArray(snapshots) || snapshots.length === 0) return [];
+    if (!Array.isArray(metricRows) || metricRows.length === 0) return [];
+
+    const startedMs = new Date(startedAt).getTime();
+    const snapshotById = new Map(
+        snapshots
+            .filter((snapshot) => snapshot?.session_snapshot_id)
+            .map((snapshot) => [snapshot.session_snapshot_id, snapshot])
+    );
+    const seriesByMetricKey = new Map();
+
+    for (const row of metricRows) {
+        const snapshot = snapshotById.get(row.session_snapshot_id);
+        if (!snapshot) continue;
+
+        const metricKey = String(row.metric_key || '').trim();
+        if (!metricKey) continue;
+
+        const recordedMs = new Date(snapshot.recorded_at).getTime();
+        const tSec = Number.isFinite(startedMs) && Number.isFinite(recordedMs)
+            ? Math.max(0, Math.round((recordedMs - startedMs) / 1000))
+            : Math.max(0, Number(snapshot.snapshot_no || 0));
+
+        if (!seriesByMetricKey.has(metricKey)) {
+            seriesByMetricKey.set(metricKey, {
+                metric_key: metricKey,
+                metric_name: row.metric_name || metricKey,
+                points: []
+            });
+        }
+
+        const series = seriesByMetricKey.get(metricKey);
+        series.metric_name = series.metric_name || row.metric_name || metricKey;
+        series.points.push({
+            snapshot_no: toRoundedNonNegativeInt(snapshot.snapshot_no, 0),
+            snapshot_type: snapshot.snapshot_type || 'INTERIM',
+            recorded_at: snapshot.recorded_at,
+            t_sec: tSec,
+            avg_score: clampScore(row.avg_score),
+            avg_raw_value: Number.isFinite(Number(row.avg_raw_value)) ? Number(row.avg_raw_value) : null,
+            min_raw_value: Number.isFinite(Number(row.min_raw_value)) ? Number(row.min_raw_value) : null,
+            max_raw_value: Number.isFinite(Number(row.max_raw_value)) ? Number(row.max_raw_value) : null,
+            sample_count: toRoundedNonNegativeInt(row.sample_count, 0)
+        });
+    }
+
+    return Array.from(seriesByMetricKey.values())
+        .map((series) => ({
+            ...series,
+            points: series.points.sort((a, b) => {
+                const timeDiff = toFiniteNumber(a.t_sec, 0) - toFiniteNumber(b.t_sec, 0);
+                if (timeDiff !== 0) return timeDiff;
+                return toFiniteNumber(a.snapshot_no, 0) - toFiniteNumber(b.snapshot_no, 0);
+            })
+        }))
+        .filter((series) => series.points.length > 0)
+        .sort((a, b) => {
+            const aLast = a.points[a.points.length - 1];
+            const bLast = b.points[b.points.length - 1];
+            const scoreDiff = toFiniteNumber(bLast?.avg_score, 0) - toFiniteNumber(aLast?.avg_score, 0);
+            if (scoreDiff !== 0) return scoreDiff;
+            return String(a.metric_name || a.metric_key || '').localeCompare(String(b.metric_name || b.metric_key || ''), 'ko');
+        });
+};
+
 const calculateStreak = (rows = []) => {
     if (!Array.isArray(rows) || rows.length === 0) return 0;
 
@@ -655,7 +721,7 @@ const getSessionDetail = async (req, res, next) => {
 
         const { data: finalSnapshot, error: snapshotError } = await supabase
             .from('session_snapshot')
-            .select('session_snapshot_id, snapshot_no, recorded_at')
+            .select('session_snapshot_id, snapshot_no, snapshot_type, recorded_at')
             .eq('session_id', sessionId)
             .eq('snapshot_type', 'FINAL')
             .order('snapshot_no', { ascending: false })
@@ -667,32 +733,46 @@ const getSessionDetail = async (req, res, next) => {
         let snapshotMetrics = [];
 
         if (finalSnapshot?.session_snapshot_id) {
-            const [{ data: scoreRow, error: scoreError }, { data: metricRows, error: metricError }] = await Promise.all([
-                supabase
-                    .from('session_snapshot_score')
-                    .select('score, result_basis, result_value, result_unit, summary_feedback')
-                    .eq('session_snapshot_id', finalSnapshot.session_snapshot_id)
-                    .maybeSingle(),
-                supabase
-                    .from('session_snapshot_metric')
-                    .select('metric_key, metric_name, avg_score, avg_raw_value, min_raw_value, max_raw_value, sample_count')
-                    .eq('session_snapshot_id', finalSnapshot.session_snapshot_id)
-            ]);
-
+            const { data: scoreRow, error: scoreError } = await supabase
+                .from('session_snapshot_score')
+                .select('score, result_basis, result_value, result_unit, summary_feedback')
+                .eq('session_snapshot_id', finalSnapshot.session_snapshot_id)
+                .maybeSingle();
             if (scoreError) throw scoreError;
-            if (metricError) throw metricError;
 
             snapshotScore = scoreRow || null;
-            snapshotMetrics = metricRows || [];
         }
 
         const { data: interimSnapshots, error: interimSnapshotError } = await supabase
             .from('session_snapshot')
-            .select('session_snapshot_id, snapshot_no, recorded_at')
+            .select('session_snapshot_id, snapshot_no, snapshot_type, recorded_at')
             .eq('session_id', sessionId)
             .eq('snapshot_type', 'INTERIM')
             .order('snapshot_no', { ascending: true });
         if (interimSnapshotError) throw interimSnapshotError;
+
+        const allSnapshots = [
+            ...(interimSnapshots || []),
+            ...(finalSnapshot?.session_snapshot_id ? [finalSnapshot] : [])
+        ];
+
+        const allSnapshotIds = allSnapshots
+            .map((snapshot) => snapshot.session_snapshot_id)
+            .filter(Boolean);
+
+        let metricRows = [];
+        if (allSnapshotIds.length > 0) {
+            const { data, error: metricError } = await supabase
+                .from('session_snapshot_metric')
+                .select('session_snapshot_id, metric_key, metric_name, avg_score, avg_raw_value, min_raw_value, max_raw_value, sample_count')
+                .in('session_snapshot_id', allSnapshotIds);
+            if (metricError) throw metricError;
+            metricRows = data || [];
+        }
+
+        if (finalSnapshot?.session_snapshot_id) {
+            snapshotMetrics = metricRows.filter((row) => row.session_snapshot_id === finalSnapshot.session_snapshot_id);
+        }
 
         const interimSnapshotIds = (interimSnapshots || [])
             .map((snapshot) => snapshot.session_snapshot_id)
@@ -727,6 +807,11 @@ const getSessionDetail = async (req, res, next) => {
             finalSnapshot,
             finalScore: snapshotScore?.score ?? mergedSession.final_score
         });
+        const metricSeries = buildMetricSeries({
+            startedAt: mergedSession.started_at,
+            snapshots: allSnapshots,
+            metricRows
+        });
 
         const sortedMetrics = [...snapshotMetrics].sort((a, b) => {
             const scoreDiff = toFiniteNumber(b.avg_score, 0) - toFiniteNumber(a.avg_score, 0);
@@ -749,6 +834,7 @@ const getSessionDetail = async (req, res, next) => {
                     : null
             },
             metrics: sortedMetrics,
+            metric_series: metricSeries,
             timeline,
             session_events: sessionEvents || [],
             routine_context: routineContext
@@ -931,5 +1017,8 @@ module.exports = {
     getHistoryPage,
     getSessionDetail,
     getHistoryStats,
-    deleteSession
+    deleteSession,
+    __test: {
+        buildMetricSeries
+    }
 };

@@ -896,6 +896,123 @@
   font-size: 11px;
 }
 
+.detail-series-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detail-series-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.detail-series-chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted);
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.detail-series-chip.active {
+  color: #fff;
+  border-color: #2563eb;
+  background: linear-gradient(90deg, #2563eb 0%, #0ea5e9 100%);
+}
+
+.detail-series-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.detail-series-summary-card {
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--card);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-series-summary-card label {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.detail-series-summary-card strong {
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.detail-series-summary-card small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.detail-series-summary-card.up strong {
+  color: #16a34a;
+}
+
+.detail-series-summary-card.down strong {
+  color: var(--danger);
+}
+
+.detail-series-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.detail-series-chart-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.detail-series-chart-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.detail-series-chart-svg {
+  display: block;
+  height: 220px;
+}
+
+.detail-series-area {
+  fill: rgba(59, 130, 246, 0.18);
+}
+
+.detail-series-line {
+  fill: none;
+  stroke: #2563eb;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.detail-series-dot {
+  fill: var(--card);
+  stroke: #2563eb;
+  stroke-width: 2;
+}
+
+.detail-series-caption {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .detail-track {
   height: 8px;
   border-radius: 999px;
@@ -1052,6 +1169,10 @@
   .detail-top-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .detail-series-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 700px) {
@@ -1076,6 +1197,10 @@
   }
 
   .detail-key-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-series-summary-grid {
     grid-template-columns: 1fr;
   }
 }

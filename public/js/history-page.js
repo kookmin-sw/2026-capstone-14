@@ -495,6 +495,191 @@
     `;
   }
 
+  function formatMetricTime(seconds) {
+    const safe = Math.max(0, Math.round(Number(seconds) || 0));
+    const mins = Math.floor(safe / 60);
+    const secs = safe % 60;
+    return `${mins}:${String(secs).padStart(2, '0')}`;
+  }
+
+  function formatSignedScoreDelta(value) {
+    const safe = Number(value) || 0;
+    if (Math.abs(safe) < 0.05) return '0점';
+    const rounded = Number(safe.toFixed(1));
+    return `${rounded > 0 ? '+' : ''}${formatNumber(rounded)}점`;
+  }
+
+  function normalizeMetricSeries(metricSeries) {
+    return (Array.isArray(metricSeries) ? metricSeries : [])
+      .map((series) => ({
+        metric_key: String(series?.metric_key || '').trim(),
+        metric_name: String(series?.metric_name || series?.metric_key || '메트릭').trim(),
+        points: (Array.isArray(series?.points) ? series.points : [])
+          .map((point) => {
+            const parsedScore = point?.avg_score == null ? null : Number(point.avg_score);
+            return {
+              snapshot_no: Number(point?.snapshot_no || 0),
+              snapshot_type: String(point?.snapshot_type || 'INTERIM').toUpperCase(),
+              recorded_at: point?.recorded_at || null,
+              t_sec: Math.max(0, Number(point?.t_sec || 0)),
+              avg_score: Number.isFinite(parsedScore) ? Math.max(0, Math.min(100, parsedScore)) : null,
+              avg_raw_value: point?.avg_raw_value == null ? null : Number(point.avg_raw_value),
+              min_raw_value: point?.min_raw_value == null ? null : Number(point.min_raw_value),
+              max_raw_value: point?.max_raw_value == null ? null : Number(point.max_raw_value),
+              sample_count: Math.max(0, Number(point?.sample_count || 0))
+            };
+          })
+          .filter((point) => point.avg_score != null)
+          .sort((a, b) => (a.t_sec - b.t_sec) || (a.snapshot_no - b.snapshot_no))
+      }))
+      .filter((series) => series.metric_key && series.points.length > 0);
+  }
+
+  function renderMetricSeriesChart(series) {
+    const rows = Array.isArray(series?.points) ? series.points : [];
+    if (!rows.length) {
+      return '<div class="chart-empty">시계열 데이터가 없습니다.</div>';
+    }
+
+    const width = Math.max(520, rows.length * 60);
+    const height = 220;
+    const padX = 20;
+    const padTop = 18;
+    const padBottom = 30;
+    const usableHeight = Math.max(1, height - padTop - padBottom);
+    const minSec = rows[0].t_sec;
+    const maxSec = rows[rows.length - 1].t_sec;
+    const gradientId = `metric-series-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+    const points = rows.map((row) => {
+      const x = rows.length === 1
+        ? width / 2
+        : padX + (((row.t_sec - minSec) / Math.max(maxSec - minSec, 1)) * (width - (padX * 2)));
+      const y = (height - padBottom) - ((row.avg_score / 100) * usableHeight);
+      return { ...row, x, y };
+    });
+
+    const linePath = points.length > 1 ? buildLinePath(points) : '';
+    const areaPath = points.length > 1
+      ? `${linePath} L${points[points.length - 1].x.toFixed(2)},${height - padBottom} L${points[0].x.toFixed(2)},${height - padBottom} Z`
+      : '';
+    const pointStep = rows.length > 54 ? 9 : rows.length > 36 ? 6 : rows.length > 18 ? 4 : 2;
+    const visiblePoints = points.filter((_, index) => rows.length === 1 || index === 0 || index === rows.length - 1 || index % pointStep === 0);
+    const lastPointLabel = points[points.length - 1].snapshot_type === 'FINAL' ? '최종' : '마지막';
+
+    return `
+      <div class="detail-series-chart-shell">
+        <div class="detail-series-chart-scroll">
+          <svg
+            class="detail-series-chart-svg"
+            width="${width}"
+            height="${height}"
+            viewBox="0 0 ${width} ${height}"
+            role="img"
+            aria-label="${escapeHtml(series.metric_name)} 점수 시계열"
+            preserveAspectRatio="none"
+          >
+            <defs>
+              <linearGradient id="${gradientId}" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.28"></stop>
+                <stop offset="100%" stop-color="#3b82f6" stop-opacity="0"></stop>
+              </linearGradient>
+            </defs>
+            <line x1="${padX}" x2="${width - padX}" y1="${height - padBottom}" y2="${height - padBottom}" stroke="rgba(148, 163, 184, 0.45)" stroke-width="1"></line>
+            <line x1="${padX}" x2="${width - padX}" y1="${padTop}" y2="${padTop}" stroke="rgba(148, 163, 184, 0.22)" stroke-width="1" stroke-dasharray="4 4"></line>
+            <line x1="${padX}" x2="${width - padX}" y1="${(height - padBottom + padTop) / 2}" y2="${(height - padBottom + padTop) / 2}" stroke="rgba(148, 163, 184, 0.18)" stroke-width="1" stroke-dasharray="4 4"></line>
+            ${areaPath ? `<path class="detail-series-area" d="${areaPath}" fill="url(#${gradientId})"></path>` : ''}
+            ${linePath ? `<path class="detail-series-line" d="${linePath}"></path>` : ''}
+            ${visiblePoints.map((point) => `
+              <circle class="detail-series-dot" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="4">
+                <title>${escapeHtml(`${formatMetricTime(point.t_sec)} · ${formatNumber(point.avg_score)}점 · ${point.snapshot_type}`)}</title>
+              </circle>
+            `).join('')}
+          </svg>
+        </div>
+        <div class="detail-series-caption">
+          <span>${escapeHtml(formatMetricTime(points[0].t_sec))}</span>
+          <span>${escapeHtml(formatMetricTime(points[Math.floor(points.length / 2)].t_sec))}</span>
+          <span>${escapeHtml(`${formatMetricTime(points[points.length - 1].t_sec)} · ${lastPointLabel} ${formatNumber(points[points.length - 1].avg_score)}점`)}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderMetricSeriesSection(target, metricSeries) {
+    if (!target) return;
+
+    const seriesList = normalizeMetricSeries(metricSeries);
+    if (!seriesList.length) {
+      target.innerHTML = '<div class="chart-empty">메트릭 시계열 데이터가 없습니다.</div>';
+      return;
+    }
+
+    let activeKey = seriesList[0].metric_key;
+
+    function renderActiveSeries() {
+      const activeSeries = seriesList.find((series) => series.metric_key === activeKey) || seriesList[0];
+      activeKey = activeSeries.metric_key;
+
+      const firstPoint = activeSeries.points[0];
+      const lastPoint = activeSeries.points[activeSeries.points.length - 1];
+      const delta = Number((lastPoint.avg_score - firstPoint.avg_score).toFixed(1));
+      const totalSamples = activeSeries.points.reduce((sum, point) => sum + Number(point.sample_count || 0), 0);
+      const hasTimeline = activeSeries.points.length > 1;
+
+      target.innerHTML = `
+        <div class="detail-series-shell">
+          <div class="detail-series-selector" role="tablist" aria-label="메트릭 선택">
+            ${seriesList.map((series) => `
+              <button
+                type="button"
+                class="detail-series-chip ${series.metric_key === activeKey ? 'active' : ''}"
+                data-metric-key="${escapeHtml(series.metric_key)}"
+              >
+                ${escapeHtml(series.metric_name)}
+              </button>
+            `).join('')}
+          </div>
+
+          <div class="detail-series-summary-grid">
+            <article class="detail-series-summary-card">
+              <label>시작 점수</label>
+              <strong>${formatNumber(firstPoint.avg_score)}점</strong>
+              <small>${escapeHtml(formatMetricTime(firstPoint.t_sec))}</small>
+            </article>
+            <article class="detail-series-summary-card">
+              <label>마지막 점수</label>
+              <strong>${formatNumber(lastPoint.avg_score)}점</strong>
+              <small>${escapeHtml(formatMetricTime(lastPoint.t_sec))}</small>
+            </article>
+            <article class="detail-series-summary-card ${delta > 0.1 ? 'up' : delta < -0.1 ? 'down' : ''}">
+              <label>변화량</label>
+              <strong>${escapeHtml(formatSignedScoreDelta(delta))}</strong>
+              <small>${lastPoint.snapshot_type === 'FINAL' ? 'FINAL 포함' : '중간 스냅샷 기준'}</small>
+            </article>
+            <article class="detail-series-summary-card">
+              <label>포인트 / 샘플</label>
+              <strong>${formatNumber(activeSeries.points.length)} / ${formatNumber(totalSamples)}</strong>
+              <small>${escapeHtml(activeSeries.metric_name)}</small>
+            </article>
+          </div>
+
+          ${!hasTimeline ? '<p class="detail-series-note">중간 메트릭이 없어 최종 스냅샷 중심으로 표시합니다.</p>' : ''}
+          ${renderMetricSeriesChart(activeSeries)}
+        </div>
+      `;
+
+      target.querySelectorAll('[data-metric-key]').forEach((button) => {
+        button.addEventListener('click', () => {
+          activeKey = button.dataset.metricKey;
+          renderActiveSeries();
+        });
+      });
+    }
+
+    renderActiveSeries();
+  }
+
   function setText(id, value) {
     const element = document.getElementById(id);
     if (element) element.textContent = value;
@@ -538,6 +723,7 @@
 
       const session = payload.session || {};
       const metrics = Array.isArray(payload.metrics) ? payload.metrics : [];
+      const metricSeries = Array.isArray(payload.metric_series) ? payload.metric_series : [];
       const timeline = Array.isArray(payload.timeline) ? payload.timeline : [];
       const sessionEvents = Array.isArray(payload.session_events) ? payload.session_events : [];
       const routineContext = payload.routine_context || {};
@@ -670,6 +856,11 @@
           ${renderMetricList(metrics)}
         </section>
 
+        <section class="detail-panel">
+          <h4>메트릭 점수 시계열</h4>
+          <div id="detailMetricSeries"></div>
+        </section>
+
         <section class="detail-dual-grid">
           <article class="detail-panel">
             <h4>점수 타임라인</h4>
@@ -683,6 +874,8 @@
 
         ${routineContextHtml}
       `;
+
+      renderMetricSeriesSection(document.getElementById('detailMetricSeries'), metricSeries);
     } catch (error) {
       console.error('Session detail load failed:', error);
       body.innerHTML = `<div class="chart-empty">${escapeHtml(error.message || '상세 정보를 불러오지 못했습니다.')}</div>`;

@@ -377,10 +377,37 @@ class SessionBuffer {
     return Math.max(0, Math.min(100, Math.round((best / target) * 100)));
   }
 
+  normalizeInterimBreakdown(breakdown) {
+    if (!Array.isArray(breakdown) || breakdown.length === 0) return [];
+
+    return breakdown
+      .map((item) => {
+        const metricKey = (item?.key || item?.metric_key || '').toString().trim();
+        if (!metricKey) return null;
+
+        const score = Number(item?.score ?? item?.avg_score);
+        const rawValue = Number.isFinite(item?.rawValue)
+          ? item.rawValue
+          : (Number.isFinite(item?.actualValue) ? item.actualValue : item?.avg_raw_value);
+
+        return {
+          metric_key: metricKey,
+          metric_name: item?.title || item?.metric_name || metricKey,
+          avg_score: Number.isFinite(score) ? Math.max(0, Math.min(100, score)) : null,
+          avg_raw_value: Number.isFinite(rawValue) ? rawValue : null,
+          min_raw_value: Number.isFinite(item?.minRaw) ? item.minRaw : (Number.isFinite(rawValue) ? rawValue : null),
+          max_raw_value: Number.isFinite(item?.maxRaw) ? item.maxRaw : (Number.isFinite(rawValue) ? rawValue : null),
+          sample_count: Number.isFinite(item?.sampleCount) ? Math.max(0, Math.round(item.sampleCount)) : 1
+        };
+      })
+      .filter(Boolean);
+  }
+
   generateInterimSnapshots() {
     return this.scoreTimeline.map((item) => ({
       timestamp_ms: item.timestamp,
-      score: item.score
+      score: item.score,
+      breakdown: this.normalizeInterimBreakdown(item.breakdown)
     }));
   }
 
