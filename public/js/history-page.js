@@ -1,6 +1,6 @@
 ﻿(function initHistoryPage() {
   const statusLabelMap = { DONE: '완료', ABORTED: '중단' };
-  const viewLabelMap = { FRONT: '정면', SIDE: '측면', DIAGONAL: '대각선' };
+  const viewLabelMap = { FRONT: '정면', SIDE: '측면', DIAGONAL: '대각선', ROUTINE: '루틴' };
 
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -14,6 +14,12 @@
 
   function formatNumber(value) {
     return new Intl.NumberFormat('ko-KR').format(Number(value) || 0);
+  }
+
+  function toPositiveInt(value) {
+    const parsed = Number.parseInt(String(value), 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return parsed;
   }
 
   function formatDuration(seconds) {
@@ -361,7 +367,7 @@
     const items = Array.from(document.querySelectorAll('.history-item'));
     const doneItems = items.filter((item) => String(item.dataset.sessionStatus || '').toUpperCase() === 'DONE');
     const abortedItems = items.filter((item) => String(item.dataset.sessionStatus || '').toUpperCase() === 'ABORTED');
-    const scores = doneItems
+    const scores = items
       .map((item) => Number(item.dataset.sessionScore || 0))
       .filter((score) => Number.isFinite(score));
     const avgScore = scores.length
@@ -374,7 +380,116 @@
     setText('visibleAvgScore', `${formatNumber(avgScore)}점`);
   }
 
+  function renderRoutineSequence(body, routineRun, sequence) {
+    if (!body) return;
+
+    const scoreText = Number.isFinite(Number(routineRun.total_score))
+      ? `${formatNumber(routineRun.total_score)}점`
+      : '-';
+
+    body.innerHTML = `
+      <section class="detail-top-grid detail-top-grid--focus">
+        <article class="detail-stat-card">
+          <label>루틴 이름</label>
+          <strong>${escapeHtml(routineRun.routine_name || '루틴')}</strong>
+          <small>실행 #${escapeHtml(String(routineRun.routine_instance_id || '-'))}</small>
+        </article>
+        <article class="detail-stat-card">
+          <label>상태</label>
+          <strong>${escapeHtml(statusLabelMap[String(routineRun.status || '').toUpperCase()] || routineRun.status || '-')}</strong>
+          <small>완료 세션 ${formatNumber(routineRun.done_sessions || 0)}회</small>
+        </article>
+        <article class="detail-stat-card">
+          <label>평균 정확도</label>
+          <strong>${escapeHtml(scoreText)}</strong>
+          <small>전체 운동 세션 평균</small>
+        </article>
+        <article class="detail-stat-card">
+          <label>총 운동 시간</label>
+          <strong>${escapeHtml(formatDuration(routineRun.total_duration_sec || 0))}</strong>
+          <small>세션 합산</small>
+        </article>
+        <article class="detail-stat-card">
+          <label>실행 시각</label>
+          <strong>${escapeHtml(formatDateTime(routineRun.started_at))}</strong>
+          <small>종료 ${escapeHtml(formatDateTime(routineRun.ended_at))}</small>
+        </article>
+      </section>
+
+      <section class="detail-panel">
+        <h4>운동 순서</h4>
+        ${sequence.length === 0
+          ? '<div class="chart-empty">운동 순서 데이터가 없습니다.</div>'
+          : `<div class="routine-sequence-list">
+              ${sequence.map((item) => {
+                const itemSessionId = toPositiveInt(item?.session_id);
+                const hasSession = itemSessionId != null;
+                return `
+                  <button
+                    type="button"
+                    class="routine-sequence-item ${hasSession ? '' : 'disabled'}"
+                    data-session-id="${hasSession ? escapeHtml(String(itemSessionId)) : ''}"
+                    ${hasSession ? '' : 'disabled'}
+                  >
+                    <span class="routine-sequence-order">${formatNumber(item.order_no || 0)}</span>
+                    <div class="routine-sequence-content">
+                      <strong>${escapeHtml(item.summary_text || item.exercise_name || '운동')}</strong>
+                      <small>세트 ${formatNumber(item.set_count || 0)}개 · 세션 ${formatNumber(item.session_count || 0)}개</small>
+                    </div>
+                    <span class="routine-sequence-action">${hasSession ? '세션 상세 보기' : '세션 없음'}</span>
+                  </button>
+                `;
+              }).join('')}
+            </div>`}
+      </section>
+    `;
+
+    body.querySelectorAll('.routine-sequence-item[data-session-id]').forEach((element) => {
+      element.addEventListener('click', () => {
+        const sessionId = toPositiveInt(element.dataset.sessionId);
+        if (sessionId == null) return;
+        viewDetail(sessionId);
+      });
+    });
+  }
+
+  async function viewRoutineDetail(routineInstanceId) {
+    const modal = document.getElementById('detailModal');
+    const body = document.getElementById('detailModalBody');
+    const title = document.getElementById('detailModalTitle');
+
+    if (!modal || !body || !title) return;
+
+    modal.hidden = false;
+    title.textContent = '루틴 상세';
+    body.innerHTML = '<div class="loading-state">루틴 데이터를 불러오는 중...</div>';
+
+    try {
+      const response = await fetch(`/api/history/routine/${routineInstanceId}`);
+      const payload = await response.json();
+
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.error || '루틴 상세 조회에 실패했습니다.');
+      }
+
+      const routineRun = payload.routine_run || {};
+      const sequence = Array.isArray(payload.sequence) ? payload.sequence : [];
+
+      title.textContent = `${routineRun.routine_name || '루틴'} · 실행 #${routineRun.routine_instance_id || '-'}`;
+      renderRoutineSequence(body, routineRun, sequence);
+    } catch (error) {
+      console.error('Routine detail load failed:', error);
+      body.innerHTML = `<div class="chart-empty">${escapeHtml(error.message || '루틴 상세 정보를 불러오지 못했습니다.')}</div>`;
+    }
+  }
+
   async function viewDetail(sessionId) {
+    const safeSessionId = toPositiveInt(sessionId);
+    if (safeSessionId == null) {
+      alert('유효하지 않은 세션 ID입니다.');
+      return;
+    }
+
     const modal = document.getElementById('detailModal');
     const body = document.getElementById('detailModalBody');
     const title = document.getElementById('detailModalTitle');
@@ -386,7 +501,7 @@
     body.innerHTML = '<div class="loading-state">세션 데이터를 불러오는 중...</div>';
 
     try {
-      const response = await fetch(`/api/history/${sessionId}`);
+      const response = await fetch(`/api/history/${safeSessionId}`);
       const payload = await response.json();
 
       if (!response.ok || !payload.success) {
@@ -562,6 +677,7 @@
   });
 
   window.viewDetail = viewDetail;
+  window.viewRoutineDetail = viewRoutineDetail;
   window.closeModal = closeModal;
   window.deleteSession = deleteSession;
 

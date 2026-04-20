@@ -500,6 +500,10 @@
   border-left-color: rgba(239, 68, 68, 0.55);
 }
 
+.history-item.is-routine {
+  border-left-color: rgba(14, 165, 233, 0.65);
+}
+
 .history-item-header {
   display: flex;
   justify-content: space-between;
@@ -1426,6 +1430,84 @@
   font-size: 13px;
 }
 
+.routine-sequence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.routine-sequence-item {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+
+.routine-sequence-item:hover {
+  background: var(--input-bg);
+  border-color: rgba(37, 99, 235, 0.34);
+  transform: translateY(-1px);
+}
+
+.routine-sequence-item.disabled,
+.routine-sequence-item:disabled {
+  cursor: default;
+  opacity: 0.65;
+  transform: none;
+}
+
+.routine-sequence-item.disabled:hover,
+.routine-sequence-item:disabled:hover {
+  background: var(--card);
+  border-color: var(--border);
+}
+
+.routine-sequence-order {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.routine-sequence-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.routine-sequence-content strong {
+  font-size: 14px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.routine-sequence-content small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.routine-sequence-action {
+  font-size: 12px;
+  color: #2563eb;
+  font-weight: 700;
+}
+
 @media (max-width: 1360px) {
   .history-kpi-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1535,6 +1617,15 @@
 
   .detail-focus-grid {
     grid-template-columns: 1fr;
+  }
+
+  .routine-sequence-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .routine-sequence-action {
+    grid-column: 1 / -1;
+    justify-self: end;
   }
 }
 

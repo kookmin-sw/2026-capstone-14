@@ -3,7 +3,7 @@ const { getSignupPage, handleSignup, checkLoginId } = require('../controllers/si
 const { getLoginPage, handleLogin } = require('../controllers/login');
 const { requireGuest, requireAuth, handleLogout } = require('../middleware/auth');
 const { getQuestPage, completeQuest, claimQuestReward, assignDailyQuests, assignWeeklyQuests } = require('../controllers/quest');
-const { getHistoryPage, getSessionDetail, getHistoryStats, deleteSession } = require('../controllers/history');
+const { getHistoryPage, getSessionDetail, getRoutineHistoryDetail, getHistoryStats, deleteSession } = require('../controllers/history');
 const { getHomePage } = require('../controllers/home');
 const { getSettingsPage, updateNickname, updatePassword, updateTheme, getUserSettings } = require('../controllers/settings');
 const router = express.Router();
@@ -53,6 +53,7 @@ router.get('/history', requireAuth, getHistoryPage);
 
 // 히스토리 API
 router.get('/api/history/stats', requireAuth, getHistoryStats);
+router.get('/api/history/routine/:routineInstanceId', requireAuth, getRoutineHistoryDetail);
 router.get('/api/history/:sessionId', requireAuth, getSessionDetail);
 router.delete('/api/history/:sessionId', requireAuth, deleteSession);
 

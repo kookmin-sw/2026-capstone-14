@@ -35,6 +35,7 @@ async function initSession(workoutData) {
     currentSegmentSec: 0,
     bestHoldSec: 0,
     plankGoalReached: false,
+    routineSetSyncPending: false,
   };
 
   const videoElement = document.getElementById("videoElement");
@@ -606,6 +607,47 @@ async function initSession(workoutData) {
     });
   }
 
+  function resetSessionBufferForSession(nextSessionId, options = {}) {
+    const normalizedSessionId = Number(nextSessionId);
+    if (!Number.isFinite(normalizedSessionId) || normalizedSessionId <= 0) {
+      return;
+    }
+
+    const nextSelectedView = normalizeViewCode(options.selectedView);
+    if (nextSelectedView) {
+      state.selectedView = nextSelectedView;
+    }
+
+    const exerciseCode =
+      options.exerciseCode ||
+      workoutData.exercise?.code ||
+      "unknown";
+
+    if (sessionBuffer) {
+      sessionBuffer.clearStorage();
+    }
+
+    state.sessionId = normalizedSessionId;
+    pendingSessionPayload = null;
+    hasUnloadAbortSent = false;
+
+    sessionBuffer = new SessionBuffer(state.sessionId, {
+      exerciseCode,
+      mode: workoutData.mode,
+      selectedView: state.selectedView,
+      resultBasis: repCounter?.pattern?.isTimeBased ? "DURATION" : "REPS",
+      targetSec: Number.isFinite(Number(options.targetSec))
+        ? Number(options.targetSec)
+        : getCurrentTargetSec() || null,
+    });
+
+    sessionBuffer.addEvent("SESSION_START", {
+      exercise: exerciseCode,
+      selected_view: state.selectedView,
+      source: options.source || "SESSION_RESET",
+    });
+  }
+
   async function startWorkout() {
     const prevOverlayHtml = cameraOverlay.innerHTML;
     const prevOverlayHidden = cameraOverlay.hidden;
@@ -657,18 +699,13 @@ async function initSession(workoutData) {
       syncPlankTargetUi();
       refreshRoutineCounterUi();
 
-      sessionBuffer = new SessionBuffer(state.sessionId, {
+      resetSessionBufferForSession(state.sessionId, {
         exerciseCode: workoutData.exercise.code,
-        mode: workoutData.mode,
         selectedView: state.selectedView,
-        resultBasis: repCounter?.pattern?.isTimeBased ? "DURATION" : "REPS",
         targetSec: getCurrentTargetSec() || null,
+        source: "SESSION_START",
       });
       state.currentTargetSec = getCurrentTargetSec();
-      sessionBuffer.addEvent("SESSION_START", {
-        exercise: workoutData.exercise.code,
-        selected_view: state.selectedView,
-      });
 
       updateStatus("running", "운동 중");
       cameraOverlay.hidden = true;
@@ -990,7 +1027,7 @@ async function initSession(workoutData) {
     }
 
     if (workoutData.mode === "ROUTINE" && workoutData.routine) {
-      checkRoutineProgress();
+      void checkRoutineProgress();
     }
 
     showRepFeedback(repRecord);
@@ -1201,8 +1238,52 @@ async function initSession(workoutData) {
     return true;
   }
 
-  function checkRoutineProgress(trigger = "REP") {
+  async function recordRoutineSetCompletion({
+    actualValue,
+    targetType,
+    durationSec,
+    score,
+    sessionPayload = null,
+  }) {
+    if (!state.sessionId) {
+      throw new Error("sessionId가 없어 루틴 세트를 저장할 수 없습니다.");
+    }
+
+    const payload =
+      sessionPayload && typeof sessionPayload === "object"
+        ? { ...sessionPayload }
+        : {};
+
+    payload.actual_value = Math.max(0, Math.round(Number(actualValue) || 0));
+    payload.duration_sec = Math.max(0, Math.round(Number(durationSec) || 0));
+    payload.score = Number.isFinite(Number(score))
+      ? Math.round(Number(score))
+      : null;
+
+    if (targetType === "REPS") {
+      payload.actual_reps = payload.actual_value;
+    }
+
+    const response = await fetch(`/api/workout/session/${state.sessionId}/set`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok || !data?.success) {
+      throw new Error(
+        data?.error || data?.message || "루틴 세트 저장에 실패했습니다.",
+      );
+    }
+
+    return data?.routine || null;
+  }
+
+  async function checkRoutineProgress(trigger = "REP") {
     if (state.phase !== "WORKING") return;
+    if (state.routineSetSyncPending) return;
+
     const currentStep =
       workoutData.routine.routine_setup[state.currentStepIndex];
     if (!currentStep) return;
@@ -1218,37 +1299,165 @@ async function initSession(workoutData) {
 
     if (actualValue < targetValue) return;
 
-    const restSec = Math.max(0, Number(currentStep.rest_sec) || 0);
+    state.routineSetSyncPending = true;
+    const fallbackRestSec = Math.max(0, Number(currentStep.rest_sec) || 0);
 
-    if (sessionBuffer) {
-      sessionBuffer.completeSet(restSec);
-      if (trigger) {
-        sessionBuffer.addEvent("ROUTINE_TARGET_REACHED");
-      }
-    }
-    state.currentSetWorkSec = 0;
-    updatePrimaryCounterDisplay();
+    try {
+      let sessionPayload = null;
+      const isTimeBased = isTimeBasedExercise();
+      const timeSummary =
+        isTimeBased && repCounter?.getTimeSummary
+          ? repCounter.getTimeSummary()
+          : null;
 
-    const hasNextExerciseStep =
-      state.currentStepIndex < workoutData.routine.routine_setup.length - 1;
-
-    if (state.currentSet < currentStep.sets) {
-      if (restSec > 0) {
-        startRest(restSec, "NEXT_SET");
+      if (sessionBuffer) {
+        if (trigger) {
+          sessionBuffer.addEvent("ROUTINE_TARGET_REACHED");
+        }
+        sessionPayload = sessionBuffer.export({
+          isTimeBased,
+          targetSec: getCurrentTargetSec(),
+          bestHoldSec: timeSummary?.bestHoldSec || state.bestHoldSec || 0,
+          bestHoldPostureScore: repCounter?.getBestHoldPostureScore
+            ? repCounter.getBestHoldPostureScore()
+            : 0,
+        });
       } else {
-        state.currentSet++;
-        setCountEl.textContent = state.currentSet;
-        resetCurrentSetTracking();
-        showAlert("?ㅼ쓬 ?명듃", `${state.currentSet}?명듃 ?쒖옉!`);
+        sessionPayload = {
+          selected_view: state.selectedView,
+          result_basis: isTimeBased ? "DURATION" : "REPS",
+          total_result_value: isTimeBased
+            ? timeSummary?.bestHoldSec || state.bestHoldSec || 0
+            : actualValue,
+          total_result_unit: isTimeBased ? "SEC" : "COUNT",
+          duration_sec: state.currentSetWorkSec,
+          total_reps: isTimeBased ? 0 : actualValue,
+          target_sec: isTimeBased ? getCurrentTargetSec() || null : null,
+          best_hold_sec: isTimeBased
+            ? timeSummary?.bestHoldSec || state.bestHoldSec || 0
+            : null,
+          final_score: state.liveScore || 0,
+        };
       }
-    } else if (hasNextExerciseStep) {
-      if (restSec > 0) {
-        startRest(restSec, "NEXT_EXERCISE");
+
+      const routineState = await recordRoutineSetCompletion({
+        actualValue,
+        targetType,
+        durationSec: state.currentSetWorkSec,
+        score: state.liveScore,
+        sessionPayload,
+      });
+
+      const action = String(routineState?.action || "").toUpperCase();
+      const restSec = Math.max(
+        0,
+        Number(
+          routineState?.rest_sec != null
+            ? routineState.rest_sec
+            : fallbackRestSec,
+        ) || 0,
+      );
+
+      if (action === "ALREADY_PROCESSED") {
+        return;
+      }
+
+      if (action === "NEXT_SET" || action === "NEXT_STEP") {
+        const nextSessionId = Number(routineState?.next_session?.session_id);
+        if (!Number.isFinite(nextSessionId) || nextSessionId <= 0) {
+          throw new Error("다음 루틴 세션 정보를 받지 못했습니다.");
+        }
+
+        const nextTargetType =
+          action === "NEXT_STEP"
+            ? normalizeRoutineTargetType(routineState?.next_step?.target_type)
+            : targetType;
+        const nextTargetSec =
+          nextTargetType === "TIME"
+            ? Math.max(
+                1,
+                Number(
+                  action === "NEXT_STEP"
+                    ? routineState?.next_step?.target_value
+                    : currentStep.target_value,
+                ) || 1,
+              )
+            : null;
+        const nextExerciseCode =
+          action === "NEXT_STEP"
+            ? routineState?.next_exercise?.code ||
+              workoutData.routine?.routine_setup?.[state.currentStepIndex + 1]
+                ?.exercise?.code ||
+              workoutData.exercise?.code
+            : workoutData.exercise?.code;
+
+        resetSessionBufferForSession(nextSessionId, {
+          exerciseCode: nextExerciseCode,
+          selectedView: routineState?.next_session?.selected_view,
+          targetSec: nextTargetSec,
+          source: `ROUTINE_${action}`,
+        });
+      }
+
+      state.currentSetWorkSec = 0;
+      updatePrimaryCounterDisplay();
+
+      if (action === "NEXT_SET") {
+        if (restSec > 0) {
+          startRest(restSec, "NEXT_SET");
+        } else {
+          state.currentSet++;
+          setCountEl.textContent = state.currentSet;
+          resetCurrentSetTracking();
+          showAlert("다음 세트", `${state.currentSet}세트 시작!`);
+        }
+        return;
+      }
+
+      if (action === "NEXT_STEP") {
+        if (restSec > 0) {
+          startRest(restSec, "NEXT_EXERCISE");
+        } else {
+          nextExercise();
+        }
+        return;
+      }
+
+      if (action === "ROUTINE_COMPLETE") {
+        nextExercise();
+        return;
+      }
+
+      // 서버 응답에 루틴 액션이 없으면 기존 클라이언트 흐름으로 폴백
+      const hasNextExerciseStep =
+        state.currentStepIndex < workoutData.routine.routine_setup.length - 1;
+
+      if (state.currentSet < currentStep.sets) {
+        if (restSec > 0) {
+          startRest(restSec, "NEXT_SET");
+        } else {
+          state.currentSet++;
+          setCountEl.textContent = state.currentSet;
+          resetCurrentSetTracking();
+          showAlert("다음 세트", `${state.currentSet}세트 시작!`);
+        }
+      } else if (hasNextExerciseStep) {
+        if (restSec > 0) {
+          startRest(restSec, "NEXT_EXERCISE");
+        } else {
+          nextExercise();
+        }
       } else {
         nextExercise();
       }
-    } else {
-      nextExercise();
+    } catch (error) {
+      console.error("[Session] 루틴 세트 동기화 실패:", error);
+      showAlert(
+        "루틴 저장 실패",
+        "세트 저장에 실패했습니다. 잠시 후 다시 시도됩니다.",
+      );
+    } finally {
+      state.routineSetSyncPending = false;
     }
   }
 
@@ -1266,7 +1475,7 @@ async function initSession(workoutData) {
         }
 
         if (workoutData.mode === "ROUTINE" && workoutData.routine) {
-          checkRoutineProgress("TIMER");
+          void checkRoutineProgress("TIMER");
         }
       }
     }, 1000);

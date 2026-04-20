@@ -761,6 +761,246 @@ const loadRoutineContextBySetId = async (setId) => {
     return context;
 };
 
+const formatResultValueWithUnit = ({ resultBasis, resultUnit, value }) => {
+    const safeValue = toRoundedNonNegativeInt(value, 0);
+    if (safeValue <= 0) return null;
+
+    const basis = normalizeResultBasis(resultBasis);
+    const unit = normalizeResultUnit(resultUnit);
+
+    if (basis === 'DURATION' || unit === 'SEC') return `${safeValue}초`;
+    if (basis === 'REPS' || unit === 'COUNT') return `${safeValue}회`;
+    return `${safeValue}`;
+};
+
+const pickRepresentativeSession = (rows = []) => {
+    const sorted = [...rows].sort((a, b) => {
+        const aDone = String(a?.status || '').toUpperCase() === 'DONE' ? 1 : 0;
+        const bDone = String(b?.status || '').toUpperCase() === 'DONE' ? 1 : 0;
+        if (aDone !== bDone) return bDone - aDone;
+        return new Date(b?.started_at || 0).getTime() - new Date(a?.started_at || 0).getTime();
+    });
+
+    return sorted[0] || null;
+};
+
+const buildRoutineStepSequence = ({
+    steps = [],
+    sets = [],
+    sessions = [],
+    includeEmptySteps = false
+}) => {
+    const uniqueStepById = new Map(
+        (steps || [])
+            .filter((step) => step?.step_instance_id)
+            .map((step) => [step.step_instance_id, step])
+    );
+
+    const setRows = (sets || [])
+        .filter((setRow) => setRow?.set_id && setRow?.step_instance_id)
+        .sort((a, b) => {
+            if (a.step_instance_id !== b.step_instance_id) {
+                return Number(a.step_instance_id) - Number(b.step_instance_id);
+            }
+            return Number(a.set_no || 0) - Number(b.set_no || 0);
+        });
+
+    const setsByStepId = new Map();
+    for (const setRow of setRows) {
+        if (!setsByStepId.has(setRow.step_instance_id)) {
+            setsByStepId.set(setRow.step_instance_id, []);
+        }
+        setsByStepId.get(setRow.step_instance_id).push(setRow);
+    }
+
+    const sessionsBySetId = new Map();
+    for (const session of sessions || []) {
+        if (!session?.set_id) continue;
+        if (!sessionsBySetId.has(session.set_id)) {
+            sessionsBySetId.set(session.set_id, []);
+        }
+        sessionsBySetId.get(session.set_id).push(session);
+    }
+
+    const sortedSteps = Array.from(uniqueStepById.values()).sort((a, b) => {
+        const orderDiff = Number(a?.order_no || 0) - Number(b?.order_no || 0);
+        if (orderDiff !== 0) return orderDiff;
+        return Number(a?.step_instance_id || 0) - Number(b?.step_instance_id || 0);
+    });
+
+    const sequence = sortedSteps.map((step) => {
+        const stepSets = setsByStepId.get(step.step_instance_id) || [];
+        const stepSessions = [];
+
+        let totalValue = 0;
+        let resultBasis = null;
+        let resultUnit = null;
+
+        for (const setRow of stepSets) {
+            totalValue += toRoundedNonNegativeInt(setRow?.actual_value, 0);
+            resultBasis = resultBasis || normalizeResultBasis(setRow?.result_basis);
+            resultUnit = resultUnit || normalizeResultUnit(setRow?.value_unit);
+
+            const linkedSessions = sessionsBySetId.get(setRow.set_id) || [];
+            for (const session of linkedSessions) {
+                stepSessions.push(session);
+            }
+        }
+
+        const representativeSession = pickRepresentativeSession(stepSessions);
+        const sessionCount = stepSessions.length;
+        if (representativeSession) {
+            resultBasis = resultBasis || normalizeResultBasis(representativeSession.result_basis);
+            resultUnit = resultUnit || normalizeResultUnit(representativeSession.total_result_unit);
+        }
+
+        const setSummaries = stepSets.map((setRow) => {
+            const setValueText = formatResultValueWithUnit({
+                resultBasis: setRow?.result_basis,
+                resultUnit: setRow?.value_unit,
+                value: setRow?.actual_value
+            });
+
+            return {
+                set_id: setRow?.set_id || null,
+                set_no: toRoundedNonNegativeInt(setRow?.set_no, 0),
+                status: String(setRow?.status || '').toUpperCase(),
+                actual_value: toRoundedNonNegativeInt(setRow?.actual_value, 0),
+                value_unit: normalizeResultUnit(setRow?.value_unit),
+                result_basis: normalizeResultBasis(setRow?.result_basis),
+                duration_sec: toRoundedNonNegativeInt(setRow?.duration_sec, 0),
+                value_text: setValueText || null
+            };
+        });
+
+        const exerciseName = step?.exercise?.name || `운동 ${step?.order_no || ''}`.trim();
+        const valueText = formatResultValueWithUnit({
+            resultBasis,
+            resultUnit,
+            value: totalValue
+        });
+
+        return {
+            step_instance_id: step.step_instance_id,
+            order_no: toRoundedNonNegativeInt(step.order_no, 0),
+            exercise_id: step.exercise_id || null,
+            exercise_name: exerciseName,
+            total_value: totalValue,
+            result_basis: resultBasis || null,
+            result_unit: resultUnit || null,
+            value_text: valueText,
+            summary_text: valueText ? `${exerciseName} ${valueText}` : exerciseName,
+            set_count: stepSets.length,
+            session_count: sessionCount,
+            session_id: representativeSession?.session_id || null,
+            sets: setSummaries
+        };
+    });
+
+    if (includeEmptySteps) return sequence;
+    return sequence.filter((item) =>
+        item.set_count > 0 ||
+        item.session_count > 0 ||
+        toRoundedNonNegativeInt(item.total_value, 0) > 0
+    );
+};
+
+const buildRoutineSequencePreview = (sequence = []) => {
+    if (!Array.isArray(sequence) || sequence.length === 0) {
+        return '운동 순서 정보가 없습니다.';
+    }
+
+    const preview = sequence.slice(0, 4).map((item) => item.summary_text).join(' -> ');
+    return sequence.length > 4 ? `${preview} ...` : preview;
+};
+
+const fetchRoutineMapsBySetIds = async (setIds = []) => {
+    if (!Array.isArray(setIds) || setIds.length === 0) {
+        return {
+            setById: new Map(),
+            stepById: new Map(),
+            routineById: new Map()
+        };
+    }
+
+    const { data: setRows, error: setError } = await supabase
+        .from('workout_set')
+        .select(`
+            set_id,
+            step_instance_id,
+            set_no,
+            actual_value,
+            value_unit,
+            result_basis,
+            status,
+            duration_sec
+        `)
+        .in('set_id', setIds);
+    if (setError) throw setError;
+
+    const setById = new Map((setRows || []).map((row) => [row.set_id, row]));
+    const stepIds = Array.from(new Set((setRows || []).map((row) => row.step_instance_id).filter(Boolean)));
+
+    if (stepIds.length === 0) {
+        return {
+            setById,
+            stepById: new Map(),
+            routineById: new Map()
+        };
+    }
+
+    const { data: stepRows, error: stepError } = await supabase
+        .from('routine_step_instance')
+        .select(`
+            step_instance_id,
+            routine_instance_id,
+            order_no,
+            exercise_id,
+            status,
+            exercise:exercise_id (
+                exercise_id,
+                code,
+                name
+            )
+        `)
+        .in('step_instance_id', stepIds);
+    if (stepError) throw stepError;
+
+    const stepById = new Map((stepRows || []).map((row) => [row.step_instance_id, row]));
+    const routineInstanceIds = Array.from(new Set((stepRows || []).map((row) => row.routine_instance_id).filter(Boolean)));
+
+    if (routineInstanceIds.length === 0) {
+        return {
+            setById,
+            stepById,
+            routineById: new Map()
+        };
+    }
+
+    const { data: routineRows, error: routineError } = await supabase
+        .from('routine_instance')
+        .select(`
+            routine_instance_id,
+            routine_id,
+            status,
+            started_at,
+            ended_at,
+            total_score,
+            routine:routine_id (
+                routine_id,
+                name
+            )
+        `)
+        .in('routine_instance_id', routineInstanceIds);
+    if (routineError) throw routineError;
+
+    return {
+        setById,
+        stepById,
+        routineById: new Map((routineRows || []).map((row) => [row.routine_instance_id, row]))
+    };
+};
+
 // 운동 히스토리 메인 페이지
 const getHistoryPage = async (req, res, next) => {
     try {
@@ -810,13 +1050,9 @@ const getHistoryPage = async (req, res, next) => {
                     code,
                     name
                 )
-            `, { count: 'exact' })
+            `)
             .eq('user_id', userId)
             .in('status', SESSION_STATUSES);
-
-        if (exerciseIdFilter != null) {
-            query = query.eq('exercise_id', exerciseIdFilter);
-        }
 
         if (statusFilter !== 'ALL') {
             query = query.eq('status', statusFilter);
@@ -830,19 +1066,7 @@ const getHistoryPage = async (req, res, next) => {
             query = query.lte('started_at', periodRange.end.toISOString());
         }
 
-        if (sortFilter === 'score') {
-            query = query
-                .order('final_score', { ascending: false, nullsFirst: false })
-                .order('started_at', { ascending: false });
-        } else if (sortFilter === 'oldest') {
-            query = query.order('started_at', { ascending: true });
-        } else {
-            query = query.order('started_at', { ascending: false });
-        }
-
-        query = query.range(offset, offset + limit - 1);
-
-        const { data: sessions, error: sessionsError, count } = await query;
+        const { data: sessions, error: sessionsError } = await query;
         if (sessionsError) throw sessionsError;
 
         const {
@@ -875,6 +1099,172 @@ const getHistoryPage = async (req, res, next) => {
             };
         });
 
+        const setIds = Array.from(new Set(
+            normalizedSessions
+                .map((session) => session?.set_id)
+                .filter(Boolean)
+        ));
+
+        const { setById, stepById, routineById } = await fetchRoutineMapsBySetIds(setIds);
+
+        const freeItems = [];
+        const routineSessionsByInstanceId = new Map();
+
+        for (const session of normalizedSessions) {
+            const setRow = session?.set_id ? setById.get(session.set_id) : null;
+            const stepRow = setRow?.step_instance_id ? stepById.get(setRow.step_instance_id) : null;
+            const routineInstanceId = stepRow?.routine_instance_id || null;
+
+            if (!routineInstanceId) {
+                if (exerciseIdFilter != null && Number(session?.exercise?.exercise_id) !== exerciseIdFilter) {
+                    continue;
+                }
+
+                freeItems.push({
+                    ...session,
+                    item_type: 'FREE_SESSION',
+                    item_id: `session-${session.session_id}`
+                });
+                continue;
+            }
+
+            if (!routineSessionsByInstanceId.has(routineInstanceId)) {
+                routineSessionsByInstanceId.set(routineInstanceId, []);
+            }
+
+            routineSessionsByInstanceId.get(routineInstanceId).push({
+                ...session,
+                __set_row: setRow || null,
+                __step_row: stepRow || null
+            });
+        }
+
+        const routineItems = [];
+        for (const [routineInstanceId, routineSessions] of routineSessionsByInstanceId.entries()) {
+            if (!Array.isArray(routineSessions) || routineSessions.length === 0) continue;
+
+            if (exerciseIdFilter != null) {
+                const hasExercise = routineSessions.some((session) => {
+                    const exerciseIdFromSession = Number(session?.exercise?.exercise_id);
+                    const exerciseIdFromStep = Number(session?.__step_row?.exercise_id);
+                    return exerciseIdFromSession === exerciseIdFilter || exerciseIdFromStep === exerciseIdFilter;
+                });
+                if (!hasExercise) continue;
+            }
+
+            const routineRow = routineById.get(routineInstanceId) || null;
+            const uniqueStepMap = new Map();
+            const uniqueSetMap = new Map();
+
+            for (const session of routineSessions) {
+                const stepRow = session.__step_row;
+                const setRow = session.__set_row;
+                if (stepRow?.step_instance_id && !uniqueStepMap.has(stepRow.step_instance_id)) {
+                    uniqueStepMap.set(stepRow.step_instance_id, stepRow);
+                }
+                if (setRow?.set_id && !uniqueSetMap.has(setRow.set_id)) {
+                    uniqueSetMap.set(setRow.set_id, setRow);
+                }
+            }
+
+            const sequence = buildRoutineStepSequence({
+                steps: Array.from(uniqueStepMap.values()),
+                sets: Array.from(uniqueSetMap.values()),
+                sessions: routineSessions
+            });
+            const sequencePreview = buildRoutineSequencePreview(sequence);
+
+            const sessionStartedAtList = routineSessions
+                .map((session) => session.started_at)
+                .filter(Boolean)
+                .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+            const sessionEndedAtList = routineSessions
+                .map((session) => session.ended_at)
+                .filter(Boolean)
+                .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+
+            const startedAt = routineRow?.started_at || sessionStartedAtList[0] || null;
+            const endedAt = routineRow?.ended_at || sessionEndedAtList[0] || null;
+            const durationSec = routineSessions.reduce((sum, session) => {
+                return sum + toRoundedNonNegativeInt(session?.duration_sec, 0);
+            }, 0);
+
+            const validSessionScores = routineSessions
+                .map((session) => Number(session?.final_score))
+                .filter((score) => Number.isFinite(score));
+            const averageRoutineScore = validSessionScores.length > 0
+                ? validSessionScores.reduce((sum, score) => sum + score, 0) / validSessionScores.length
+                : 0;
+            const finalScore = Math.round(
+                Math.max(0, Math.min(100, averageRoutineScore))
+            );
+
+            const rawStatus = String(routineRow?.status || '').toUpperCase();
+            let status = rawStatus;
+            if (!SESSION_STATUSES.includes(status)) {
+                const hasDone = routineSessions.some((session) => String(session?.status || '').toUpperCase() === 'DONE');
+                status = hasDone ? 'DONE' : 'ABORTED';
+            }
+
+            const routineName = routineRow?.routine?.name || `루틴 #${routineRow?.routine_id || routineInstanceId}`;
+            const doneSessionCount = routineSessions.filter(
+                (session) => String(session?.status || '').toUpperCase() === 'DONE'
+            ).length;
+
+            routineItems.push({
+                item_type: 'ROUTINE_RUN',
+                item_id: `routine-${routineInstanceId}`,
+                routine_instance_id: routineInstanceId,
+                mode: 'ROUTINE',
+                status,
+                selected_view: 'ROUTINE',
+                result_basis: null,
+                total_result_value: 0,
+                total_result_unit: null,
+                final_score: finalScore,
+                summary_feedback: sequencePreview,
+                started_at: startedAt,
+                ended_at: endedAt,
+                duration_sec: durationSec,
+                done_sessions: doneSessionCount,
+                exercise: {
+                    exercise_id: null,
+                    code: 'ROUTINE',
+                    name: routineName
+                },
+                routine_name: routineName,
+                sequence_preview: sequencePreview,
+                sequence_count: sequence.length,
+                focus_preview: {
+                    headline: sequencePreview,
+                    primary_issue: sequence.length > 0 ? sequence[0].summary_text : '운동 순서 데이터 없음',
+                    primary_action: '상세에서 운동 항목을 눌러 세션별 정확도를 확인해 보세요.'
+                }
+            });
+        }
+
+        const sortByHistoryRule = (a, b) => {
+            const aStartedMs = new Date(a?.started_at || 0).getTime();
+            const bStartedMs = new Date(b?.started_at || 0).getTime();
+
+            if (sortFilter === 'score') {
+                const scoreDiff = toFiniteNumber(b?.final_score, 0) - toFiniteNumber(a?.final_score, 0);
+                if (scoreDiff !== 0) return scoreDiff;
+                return bStartedMs - aStartedMs;
+            }
+
+            if (sortFilter === 'oldest') {
+                return aStartedMs - bStartedMs;
+            }
+
+            return bStartedMs - aStartedMs;
+        };
+
+        const mergedItems = [...freeItems, ...routineItems].sort(sortByHistoryRule);
+        const totalCount = mergedItems.length;
+        const pagedItems = mergedItems.slice(offset, offset + limit);
+        const totalPages = Math.max(1, Math.ceil(totalCount / limit));
+
         const { data: exercises, error: exerciseError } = await supabase
             .from('exercise')
             .select('exercise_id, name')
@@ -882,12 +1272,10 @@ const getHistoryPage = async (req, res, next) => {
             .order('name');
         if (exerciseError) throw exerciseError;
 
-        const totalPages = Math.ceil((count || 0) / limit);
-
         res.render('history/index', {
             title: '운동 히스토리',
             activeTab: 'history',
-            sessions: normalizedSessions,
+            sessions: pagedItems,
             exercises: exercises || [],
             filters: {
                 exercise: exerciseIdFilter != null ? String(exerciseIdFilter) : 'all',
@@ -898,7 +1286,7 @@ const getHistoryPage = async (req, res, next) => {
             pagination: {
                 page,
                 totalPages,
-                total: count || 0
+                total: totalCount
             }
         });
     } catch (error) {
@@ -1088,6 +1476,167 @@ const getSessionDetail = async (req, res, next) => {
     }
 };
 
+// 루틴 실행 상세 조회 API
+const getRoutineHistoryDetail = async (req, res, next) => {
+    try {
+        const userId = req.user.user_id;
+        const routineInstanceId = Number.parseInt(req.params.routineInstanceId, 10);
+
+        if (!Number.isFinite(routineInstanceId)) {
+            return res.status(400).json({ success: false, error: '유효하지 않은 루틴 실행 ID입니다.' });
+        }
+
+        const { data: routineRun, error: routineError } = await supabase
+            .from('routine_instance')
+            .select(`
+                routine_instance_id,
+                routine_id,
+                status,
+                started_at,
+                ended_at,
+                total_score,
+                routine:routine_id (
+                    routine_id,
+                    name
+                )
+            `)
+            .eq('routine_instance_id', routineInstanceId)
+            .eq('user_id', userId)
+            .maybeSingle();
+
+        if (routineError) throw routineError;
+        if (!routineRun) {
+            return res.status(404).json({ success: false, error: '루틴 실행 기록을 찾을 수 없습니다.' });
+        }
+
+        const { data: stepRows, error: stepError } = await supabase
+            .from('routine_step_instance')
+            .select(`
+                step_instance_id,
+                routine_instance_id,
+                order_no,
+                exercise_id,
+                status,
+                exercise:exercise_id (
+                    exercise_id,
+                    code,
+                    name
+                )
+            `)
+            .eq('routine_instance_id', routineInstanceId)
+            .order('order_no', { ascending: true });
+        if (stepError) throw stepError;
+
+        const stepIds = (stepRows || [])
+            .map((row) => row.step_instance_id)
+            .filter(Boolean);
+
+        let setRows = [];
+        if (stepIds.length > 0) {
+            const { data, error } = await supabase
+                .from('workout_set')
+                .select(`
+                    set_id,
+                    step_instance_id,
+                    set_no,
+                    actual_value,
+                    value_unit,
+                    result_basis,
+                    status,
+                    duration_sec
+                `)
+                .in('step_instance_id', stepIds)
+                .order('set_no', { ascending: true });
+            if (error) throw error;
+            setRows = data || [];
+        }
+
+        const setIds = setRows
+            .map((row) => row.set_id)
+            .filter(Boolean);
+
+        let sessionRows = [];
+        if (setIds.length > 0) {
+            const { data, error } = await supabase
+                .from('workout_session')
+                .select(`
+                    session_id,
+                    mode,
+                    status,
+                    selected_view,
+                    set_id,
+                    result_basis,
+                    total_result_value,
+                    total_result_unit,
+                    final_score,
+                    summary_feedback,
+                    started_at,
+                    ended_at,
+                    exercise:exercise_id (
+                        exercise_id,
+                        code,
+                        name
+                    )
+                `)
+                .eq('user_id', userId)
+                .in('set_id', setIds);
+            if (error) throw error;
+            sessionRows = data || [];
+        }
+
+        const { snapshotScoreBySessionId } = await fetchFinalSnapshotMaps(
+            sessionRows.map((row) => row.session_id)
+        );
+
+        const normalizedSessions = sessionRows.map((session) => {
+            const snapshotScore = snapshotScoreBySessionId.get(session.session_id) || null;
+            return mergeSessionResult(session, snapshotScore);
+        });
+
+        const sequence = buildRoutineStepSequence({
+            steps: stepRows || [],
+            sets: setRows || [],
+            sessions: normalizedSessions
+        });
+
+        const totalDurationSec = normalizedSessions.reduce(
+            (sum, session) => sum + toRoundedNonNegativeInt(session?.duration_sec, 0),
+            0
+        );
+        const doneSessions = normalizedSessions.filter(
+            (session) => String(session?.status || '').toUpperCase() === 'DONE'
+        );
+
+        const sequencePreview = buildRoutineSequencePreview(sequence);
+        const validSessionScores = normalizedSessions
+            .map((session) => Number(session?.final_score))
+            .filter((score) => Number.isFinite(score));
+        const averageSessionScore = validSessionScores.length > 0
+            ? validSessionScores.reduce((sum, score) => sum + score, 0) / validSessionScores.length
+            : 0;
+
+        return res.json({
+            success: true,
+            routine_run: {
+                routine_instance_id: routineRun.routine_instance_id,
+                routine_id: routineRun.routine_id,
+                routine_name: routineRun?.routine?.name || `루틴 #${routineRun.routine_id || routineInstanceId}`,
+                status: String(routineRun?.status || '').toUpperCase() || 'DONE',
+                started_at: routineRun.started_at,
+                ended_at: routineRun.ended_at,
+                total_score: Math.round(Math.max(0, Math.min(100, averageSessionScore))),
+                total_duration_sec: totalDurationSec,
+                total_sessions: normalizedSessions.length,
+                done_sessions: doneSessions.length,
+                sequence_preview: sequencePreview
+            },
+            sequence
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 // 통계 데이터 API (차트용)
 const getHistoryStats = async (req, res, next) => {
     try {
@@ -1260,6 +1809,7 @@ const deleteSession = async (req, res, next) => {
 module.exports = {
     getHistoryPage,
     getSessionDetail,
+    getRoutineHistoryDetail,
     getHistoryStats,
     deleteSession,
     __test: {

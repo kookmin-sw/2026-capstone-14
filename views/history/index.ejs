@@ -1,7 +1,7 @@
 ﻿<%
   const modeLabelMap = { FREE: '자율 운동', ROUTINE: '루틴 운동', LEARN: '학습 모드' };
   const statusLabelMap = { DONE: '완료', ABORTED: '중단', ALL: '전체' };
-  const viewLabelMap = { FRONT: '정면', SIDE: '측면', DIAGONAL: '대각선' };
+  const viewLabelMap = { FRONT: '정면', SIDE: '측면', DIAGONAL: '대각선', ROUTINE: '루틴' };
   const periodLabelMap = {
     all: '전체 기간',
     today: '오늘',
@@ -45,8 +45,8 @@
 
   const doneSessions = safeSessions.filter((session) => String(session?.status || '').toUpperCase() === 'DONE');
   const abortedSessions = safeSessions.filter((session) => String(session?.status || '').toUpperCase() === 'ABORTED');
-  const pageAvgScore = doneSessions.length
-    ? Math.round(doneSessions.reduce((sum, session) => sum + Math.max(0, Number(session?.final_score) || 0), 0) / doneSessions.length)
+  const pageAvgScore = safeSessions.length
+    ? Math.round(safeSessions.reduce((sum, session) => sum + Math.max(0, Number(session?.final_score) || 0), 0) / safeSessions.length)
     : 0;
   const lowAccuracyCount = doneSessions.filter((session) => Math.max(0, Number(session?.final_score) || 0) < 70).length;
 
@@ -66,6 +66,8 @@
       action: preview.primary_action || '다음 세션에서 동일 동작을 천천히 반복해 보세요.'
     };
   };
+
+  const isRoutineItem = (item) => String(item?.item_type || '').toUpperCase() === 'ROUTINE_RUN';
 %>
 
 <link rel="stylesheet" href="/history-v2.css?v=3" />
@@ -95,7 +97,7 @@
       <article class="focus-summary-card">
         <span>평균 정확도</span>
         <strong id="visibleAvgScore"><%= pageAvgScore %>점</strong>
-        <small>완료 세션 평균</small>
+        <small>전체 세션 평균</small>
       </article>
       <article class="focus-summary-card">
         <span>개선 집중 대상</span>
@@ -164,12 +166,18 @@
       <div class="history-feed">
         <% safeSessions.forEach((session) => {
           const focus = toFocusPreview(session);
+          const isRoutine = isRoutineItem(session);
+          const itemTitle = isRoutine
+            ? (session.routine_name || session.exercise?.name || '루틴 운동')
+            : (session.exercise?.name || '운동');
         %>
           <article
-            class="card history-item <%= String(session.status || '').toUpperCase() === 'ABORTED' ? 'is-aborted' : '' %>"
+            class="card history-item <%= String(session.status || '').toUpperCase() === 'ABORTED' ? 'is-aborted' : '' %> <%= isRoutine ? 'is-routine' : '' %>"
             data-session-id="<%= session.session_id %>"
+            data-routine-instance-id="<%= session.routine_instance_id || '' %>"
             data-session-status="<%= String(session.status || '').toUpperCase() %>"
             data-session-score="<%= Math.max(0, Number(session.final_score) || 0) %>"
+            data-item-type="<%= session.item_type || 'FREE_SESSION' %>"
           >
             <header class="history-item-header">
               <div class="history-item-date">
@@ -185,29 +193,36 @@
 
             <div class="history-item-body">
               <div class="history-item-main">
-                <h3 class="history-item-title"><%= session.exercise?.name || '운동' %></h3>
+                <h3 class="history-item-title"><%= itemTitle %></h3>
                 <div class="history-item-facts">
-                  <div class="fact-chip">
-                    <span>결과</span>
-                    <strong><%= formatResultValue(session) %></strong>
-                  </div>
+                  <% if (isRoutine) { %>
+                    <div class="fact-chip">
+                      <span>루틴 순서</span>
+                      <strong><%= session.sequence_count || 0 %>개 운동</strong>
+                    </div>
+                  <% } else { %>
+                    <div class="fact-chip">
+                      <span>결과</span>
+                      <strong><%= formatResultValue(session) %></strong>
+                    </div>
+                  <% } %>
                   <div class="fact-chip">
                     <span>운동 시간</span>
                     <strong><%= formatDuration(session.duration_sec) %></strong>
                   </div>
                   <div class="fact-chip">
-                    <span>개선 1순위</span>
-                    <strong><%= focus.issue %></strong>
+                    <span><%= isRoutine ? '완료 세션' : '개선 1순위' %></span>
+                    <strong><%= isRoutine ? `${session.done_sessions || 0}회` : focus.issue %></strong>
                   </div>
                 </div>
 
                 <p class="history-focus-headline">
-                  <strong>핵심 문제</strong>
-                  <span><%= focus.headline %></span>
+                  <strong><%= isRoutine ? '루틴 구성' : '핵심 문제' %></strong>
+                  <span><%= isRoutine ? `총 ${session.sequence_count || 0}개 운동 항목` : focus.headline %></span>
                 </p>
                 <p class="history-focus-action">
                   <strong>다음 행동</strong>
-                  <span><%= focus.action %></span>
+                  <span><%= isRoutine ? '상세에서 항목을 눌러 해당 운동 세션을 확인하세요.' : focus.action %></span>
                 </p>
               </div>
 
@@ -220,8 +235,12 @@
             </div>
 
             <footer class="history-item-actions">
-              <button type="button" class="ghost small" onclick="viewDetail('<%= session.session_id %>')">상세</button>
-              <button type="button" class="danger small" onclick="deleteSession('<%= session.session_id %>')">삭제</button>
+              <% if (isRoutine) { %>
+                <button type="button" class="ghost small" onclick="viewRoutineDetail('<%= session.routine_instance_id %>')">루틴 상세</button>
+              <% } else { %>
+                <button type="button" class="ghost small" onclick="viewDetail('<%= session.session_id %>')">상세</button>
+                <button type="button" class="danger small" onclick="deleteSession('<%= session.session_id %>')">삭제</button>
+              <% } %>
             </footer>
           </article>
         <% }) %>

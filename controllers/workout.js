@@ -1377,6 +1377,234 @@ const getRoutineStepRestSec = async (stepId) => {
     return Math.max(0, toNullableNonNegativeInt(stepSetup?.rest_sec) || 0);
 };
 
+const persistSessionCompletionPayload = async ({
+    session,
+    userId,
+    payload = {},
+    endedAtIso,
+    fallbackFinalScore = 0
+}) => {
+    const sessionId = session.session_id;
+    const selectedView = normalizeSelectedView(payload?.selected_view) || session.selected_view;
+    const resultFields = inferResultFields(payload || {}, session, endedAtIso);
+
+    const finalScoreRaw =
+        payload?.final_score ??
+        payload?.score ??
+        fallbackFinalScore;
+    const finalScore = toBoundedScore(finalScoreRaw, 0);
+    const summaryFeedback = toSafeText(payload?.summary_feedback, 2000);
+
+    const normalizedInterimSnapshots = normalizeInterimSnapshots(payload || {}, session.started_at);
+    const normalizedFinalMetrics = normalizeFinalMetricResults(payload?.metric_results || []);
+    const normalizedEvents = normalizeEvents(payload?.events || [], sessionId, session.started_at);
+
+    if (normalizedEvents.length > 0) {
+        const { error: insertEventError } = await supabase
+            .from('session_event')
+            .insert(normalizedEvents);
+        if (insertEventError) {
+            throw createApiError(500, '세션 이벤트 저장에 실패했습니다.');
+        }
+    }
+
+    const finalSnapshotNo = normalizedInterimSnapshots.length + 1;
+    const snapshotHeaders = [
+        ...normalizedInterimSnapshots.map((snapshot) => ({
+            session_id: sessionId,
+            snapshot_no: snapshot.snapshot_no,
+            snapshot_type: 'INTERIM',
+            recorded_at: snapshot.recorded_at
+        })),
+        {
+            session_id: sessionId,
+            snapshot_no: finalSnapshotNo,
+            snapshot_type: 'FINAL',
+            recorded_at: endedAtIso
+        }
+    ];
+
+    const { data: insertedSnapshots, error: insertSnapshotError } = await supabase
+        .from('session_snapshot')
+        .insert(snapshotHeaders)
+        .select('session_snapshot_id, snapshot_no, snapshot_type');
+
+    if (insertSnapshotError || !insertedSnapshots?.length) {
+        throw createApiError(500, '스냅샷 헤더 저장에 실패했습니다.');
+    }
+
+    const snapshotIdByNo = new Map(
+        insertedSnapshots.map((snapshot) => [snapshot.snapshot_no, snapshot.session_snapshot_id])
+    );
+
+    const snapshotScoreRows = [];
+    const snapshotMetricRows = [];
+
+    for (const interim of normalizedInterimSnapshots) {
+        const interimSnapshotId = snapshotIdByNo.get(interim.snapshot_no);
+        if (!interimSnapshotId) continue;
+
+        snapshotScoreRows.push({
+            session_snapshot_id: interimSnapshotId,
+            score: interim.score,
+            result_basis: resultFields.result_basis,
+            result_value: interim.result_value,
+            result_unit: interim.result_unit || resultFields.total_result_unit,
+            summary_feedback: interim.summary_feedback
+        });
+
+        for (const metric of interim.metrics) {
+            snapshotMetricRows.push({
+                session_snapshot_id: interimSnapshotId,
+                metric_key: metric.metric_key,
+                metric_name: metric.metric_name,
+                avg_score: metric.avg_score,
+                avg_raw_value: metric.avg_raw_value,
+                min_raw_value: metric.min_raw_value,
+                max_raw_value: metric.max_raw_value,
+                sample_count: metric.sample_count
+            });
+        }
+    }
+
+    const finalSnapshotId = snapshotIdByNo.get(finalSnapshotNo);
+    if (!finalSnapshotId) {
+        throw createApiError(500, '최종 스냅샷 생성에 실패했습니다.');
+    }
+
+    snapshotScoreRows.push({
+        session_snapshot_id: finalSnapshotId,
+        score: finalScore,
+        result_basis: resultFields.result_basis,
+        result_value: resultFields.total_result_value,
+        result_unit: resultFields.total_result_unit,
+        summary_feedback: summaryFeedback
+    });
+
+    for (const metric of normalizedFinalMetrics) {
+        snapshotMetricRows.push({
+            session_snapshot_id: finalSnapshotId,
+            metric_key: metric.metric_key,
+            metric_name: metric.metric_name,
+            avg_score: metric.avg_score,
+            avg_raw_value: metric.avg_raw_value,
+            min_raw_value: metric.min_raw_value,
+            max_raw_value: metric.max_raw_value,
+            sample_count: metric.sample_count
+        });
+    }
+
+    if (snapshotScoreRows.length > 0) {
+        const { error: insertScoreError } = await supabase
+            .from('session_snapshot_score')
+            .insert(snapshotScoreRows);
+        if (insertScoreError) {
+            throw createApiError(500, '스냅샷 점수 저장에 실패했습니다.');
+        }
+    }
+
+    if (snapshotMetricRows.length > 0) {
+        const { error: insertMetricError } = await supabase
+            .from('session_snapshot_metric')
+            .insert(snapshotMetricRows);
+        if (insertMetricError) {
+            throw createApiError(500, '스냅샷 메트릭 저장에 실패했습니다.');
+        }
+    }
+
+    const { data: updatedSession, error: updateSessionError } = await supabase
+        .from('workout_session')
+        .update({
+            status: 'DONE',
+            ended_at: endedAtIso,
+            selected_view: selectedView,
+            result_basis: resultFields.result_basis,
+            total_result_value: resultFields.total_result_value,
+            total_result_unit: resultFields.total_result_unit,
+            final_score: finalScore,
+            summary_feedback: summaryFeedback,
+            updated_at: endedAtIso
+        })
+        .eq('session_id', sessionId)
+        .eq('user_id', userId)
+        .eq('status', 'RUNNING')
+        .select(`
+            session_id,
+            user_id,
+            exercise_id,
+            set_id,
+            mode,
+            status,
+            selected_view,
+            result_basis,
+            total_result_value,
+            total_result_unit,
+            final_score,
+            summary_feedback,
+            started_at,
+            ended_at,
+            exercise:exercise_id (
+                exercise_id,
+                code,
+                name
+            )
+        `)
+        .single();
+
+    if (updateSessionError || !updatedSession) {
+        throw createApiError(500, '세션 저장에 실패했습니다.');
+    }
+
+    return {
+        updatedSession,
+        resultFields,
+        finalScore
+    };
+};
+
+const createRoutineRunningSession = async ({
+    userId,
+    exerciseId,
+    setId,
+    selectedView,
+    startedAtIso
+}) => {
+    const { data: nextSession, error } = await supabase
+        .from('workout_session')
+        .insert({
+            user_id: userId,
+            exercise_id: exerciseId,
+            set_id: setId,
+            mode: 'ROUTINE',
+            status: 'RUNNING',
+            selected_view: selectedView || 'FRONT',
+            started_at: startedAtIso,
+            updated_at: startedAtIso
+        })
+        .select(`
+            session_id,
+            user_id,
+            exercise_id,
+            set_id,
+            mode,
+            status,
+            selected_view,
+            started_at,
+            exercise:exercise_id (
+                exercise_id,
+                code,
+                name
+            )
+        `)
+        .single();
+
+    if (error || !nextSession) {
+        throw createApiError(500, '다음 루틴 세션 생성에 실패했습니다.');
+    }
+
+    return nextSession;
+};
+
 const recordWorkoutSet = async (req, res) => {
     try {
         const { sessionId } = req.params;
@@ -1498,6 +1726,37 @@ const recordWorkoutSet = async (req, res) => {
             });
         }
 
+        const mergedRoutinePayload = {
+            ...req.body,
+            selected_view: req.body?.selected_view || session.selected_view,
+            result_basis: req.body?.result_basis || resultBasis,
+            total_result_value: req.body?.total_result_value ?? actualValue,
+            total_result_unit: req.body?.total_result_unit || resultUnit,
+            duration_sec: req.body?.duration_sec ?? durationSec,
+            total_reps: req.body?.total_reps ?? (targetType === 'TIME' ? 0 : actualValue),
+            final_score: req.body?.final_score ?? score ?? session.final_score ?? 0
+        };
+
+        const { updatedSession, resultFields, finalScore } = await persistSessionCompletionPayload({
+            session,
+            userId,
+            payload: mergedRoutinePayload,
+            endedAtIso: eventTime,
+            fallbackFinalScore: score ?? 0
+        });
+
+        try {
+            await updateQuestProgress(userId, {
+                exercise_code: updatedSession.exercise?.code || session.exercise?.code,
+                duration_sec: resultFields.duration_sec,
+                total_reps: resultFields.total_reps,
+                final_score: finalScore,
+                sets: 1
+            });
+        } catch (questError) {
+            console.error('Quest progress update failed:', questError);
+        }
+
         const plannedSets = Math.max(1, toNullableNonNegativeInt(context.stepInstance.planned_sets) || 1);
         const currentSetNo = Math.max(1, toNullableNonNegativeInt(completedSet.set_no) || 1);
         const existingCompletedSets = Math.max(0, toNullableNonNegativeInt(context.stepInstance.completed_sets) || 0);
@@ -1551,16 +1810,13 @@ const recordWorkoutSet = async (req, res) => {
                 throw insertNextSetError || new Error('다음 세트 생성에 실패했습니다.');
             }
 
-            const { error: moveSessionSetError } = await supabase
-                .from('workout_session')
-                .update({
-                    set_id: nextSet.set_id,
-                    updated_at: eventTime
-                })
-                .eq('session_id', sessionId)
-                .eq('user_id', userId)
-                .eq('status', 'RUNNING');
-            if (moveSessionSetError) throw moveSessionSetError;
+            const nextSession = await createRoutineRunningSession({
+                userId,
+                exerciseId: session.exercise_id,
+                setId: nextSet.set_id,
+                selectedView: updatedSession.selected_view || session.selected_view,
+                startedAtIso: eventTime
+            });
 
             return res.json({
                 success: true,
@@ -1569,7 +1825,8 @@ const recordWorkoutSet = async (req, res) => {
                     action: 'NEXT_SET',
                     completed_set_no: currentSetNo,
                     next_set: nextSet,
-                    rest_sec: restSec
+                    rest_sec: restSec,
+                    next_session: nextSession
                 }
             });
         }
@@ -1602,6 +1859,7 @@ const recordWorkoutSet = async (req, res) => {
                 .update({
                     status: 'DONE',
                     ended_at: eventTime,
+                    total_score: finalScore,
                     updated_at: eventTime
                 })
                 .eq('routine_instance_id', context.routineInstance.routine_instance_id)
@@ -1652,17 +1910,13 @@ const recordWorkoutSet = async (req, res) => {
             throw createFirstSetError || new Error('다음 단계 첫 세트 생성에 실패했습니다.');
         }
 
-        const { error: moveSessionToStepError } = await supabase
-            .from('workout_session')
-            .update({
-                set_id: firstNextStepSet.set_id,
-                exercise_id: nextStep.exercise_id,
-                updated_at: eventTime
-            })
-            .eq('session_id', sessionId)
-            .eq('user_id', userId)
-            .eq('status', 'RUNNING');
-        if (moveSessionToStepError) throw moveSessionToStepError;
+        const nextSession = await createRoutineRunningSession({
+            userId,
+            exerciseId: nextStep.exercise_id,
+            setId: firstNextStepSet.set_id,
+            selectedView: updatedSession.selected_view || session.selected_view,
+            startedAtIso: eventTime
+        });
 
         const nextExercise = await getExerciseByIdWithViews(nextStep.exercise_id);
 
@@ -1681,6 +1935,7 @@ const recordWorkoutSet = async (req, res) => {
                     target_value: nextTargetValue
                 },
                 next_set: firstNextStepSet,
+                next_session: nextSession,
                 next_exercise: nextExercise,
                 rest_sec: nextRestSec
             }
