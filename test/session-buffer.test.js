@@ -109,3 +109,34 @@ test('generateInterimSnapshots normalizes raw metric scores to 100 scale', () =>
     }
   ]);
 });
+
+test('export includes withhold counts and rep-level scoring states', () => {
+  const SessionBuffer = loadSessionBuffer();
+  const buffer = new SessionBuffer('session-1');
+
+  buffer.recordEvent({
+    type: 'withhold',
+    timestamp: 1000,
+    gate_result: 'withhold',
+    withhold_reason: 'view_mismatch',
+    estimated_view: 'FRONT',
+    estimated_view_confidence: 0.42,
+    stable_frame_count: 3,
+  });
+
+  buffer.recordRepResult({
+    rep_index: 1,
+    rep_result: 'soft_fail',
+    rep_score: 68,
+    hard_fail_reason: null,
+    soft_fail_reasons: ['depth_not_reached'],
+    score_cap_applied: 70,
+    quality_summary: { estimated_view: 'SIDE' },
+  });
+
+  const exported = buffer.export();
+
+  assert.equal(exported.withhold_count, 1);
+  assert.equal(exported.withhold_reason_counts.view_mismatch, 1);
+  assert.equal(exported.rep_results[0].rep_result, 'soft_fail');
+});

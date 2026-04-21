@@ -33,6 +33,9 @@ class SessionBuffer {
     // 이벤트 로그
     this.events = [];
 
+    // Rep 평가 결과 (scored|hard_fail|soft_fail|withheld)
+    this.repResults = [];
+
     // IndexedDB 키
     this.dbKey = `fitplus_session_${sessionId}`;
 
@@ -202,6 +205,21 @@ class SessionBuffer {
       type,
       timestamp: Date.now() - this.startTime
     });
+  }
+
+  /**
+   * 구조화된 이벤트 기록 (withhold, gate 판정 등)
+   * 기존 addEvent(type)는 하위 호환 유지
+   */
+  recordEvent(event) {
+    this.events.push({ ...event });
+  }
+
+  /**
+   * Rep 평가 결과 기록 (scored|hard_fail|soft_fail|withheld)
+   */
+  recordRepResult(repResult) {
+    this.repResults.push({ ...repResult });
   }
 
   /**
@@ -451,6 +469,14 @@ class SessionBuffer {
 
     const interimSnapshots = this.generateInterimSnapshots();
 
+    // MVP export: withhold 이벤트 집계
+    const withholdEvents = (this.events || []).filter((event) => event.type === 'withhold');
+    const withholdReasonCounts = withholdEvents.reduce((acc, event) => {
+      const reason = event.withhold_reason || 'unknown';
+      acc[reason] = (acc[reason] || 0) + 1;
+      return acc;
+    }, {});
+
     return {
       // 기본 세션 정보
       selected_view: this.selectedView,
@@ -471,7 +497,12 @@ class SessionBuffer {
       // 별도 테이블용 데이터 (서버에서 처리)
       metric_results: this.generateMetricResults(),
       interim_snapshots: interimSnapshots,
-      events: this.events
+      events: this.events,
+
+      // MVP export: withhold 및 rep 결과 필드
+      withhold_count: withholdEvents.length,
+      withhold_reason_counts: withholdReasonCounts,
+      rep_results: this.repResults || []
     };
   }
 
