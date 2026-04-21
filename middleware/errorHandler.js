@@ -40,9 +40,7 @@ const errorHandler = (err, req, res, next) => {
     // 에러 정보 구성
     const errorInfo = {
         statusCode,
-        message: isPayloadTooLarge ? defaultMessage : (err.message || defaultMessage),
-        // 개발 환경에서만 스택 트레이스 표시
-        stack: process.env.NODE_ENV === 'production' ? null : err.stack
+        message: isPayloadTooLarge ? defaultMessage : (err.message || defaultMessage)
     };
 
     // 콘솔에 에러 로깅
@@ -56,8 +54,7 @@ const errorHandler = (err, req, res, next) => {
         return res.status(statusCode).json({
             success: false,
             error: errorInfo.message,
-            message: errorInfo.message,
-            stack: errorInfo.stack
+            message: errorInfo.message
         });
     }
 
@@ -66,7 +63,6 @@ const errorHandler = (err, req, res, next) => {
         title: `오류 ${statusCode}`,
         statusCode,
         message: errorInfo.message,
-        stack: errorInfo.stack,
         layout: 'layouts/main'
     });
 };

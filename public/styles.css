@@ -843,8 +843,70 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+
+  .brand .tag {
+    display: none;
+  }
+
+  .profile-area {
+    gap: 8px;
+  }
+
+  .profile-area .auth-btn {
+    padding: 7px 12px;
+    font-size: 12px;
+  }
+
   .tabs {
-    overflow-x: auto;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 8px;
+    padding: 10px max(12px, env(safe-area-inset-left))
+      calc(10px + env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-right));
+    background: rgba(255, 255, 255, 0.92);
+    border-top: 1px solid var(--border);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  .tab {
+    min-height: 42px;
+    border-radius: 12px;
+    padding: 8px 6px;
+    font-size: 12px;
+    text-align: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.25;
+  }
+
+  .tab.active {
+    box-shadow: none;
+  }
+
+  .content {
+    padding: 20px 16px calc(98px + env(safe-area-inset-bottom));
+  }
+
+  [data-theme="dark"] .tabs {
+    background: rgba(26, 31, 46, 0.95);
   }
 }
 
