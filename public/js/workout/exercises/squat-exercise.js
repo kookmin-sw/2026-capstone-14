@@ -13,7 +13,7 @@
  * 스쿼트 전용 rep 추적/채점/품질 게이트
  */
 (function registerSquatExerciseModule() {
-  const registry = window.WorkoutExerciseRegistry;
+  const registry = typeof window !== 'undefined' ? window.WorkoutExerciseRegistry : null;
   if (!registry) return;
 
   const REP_PHASES = {
@@ -807,3 +807,39 @@
 
   registry.register('squat', squatExercise);
 })();
+
+/**
+ * view별 스쿼트 채점 metric 우선순위 반환
+ * - FRONT: knee_alignment 1차, depth 2차 / hip_hinge는 hard-fail 불가
+ * - SIDE: depth + hip_hinge 1차, torso_stability 2차 / knee_alignment는 hard-fail 불가
+ * - DIAGONAL (기본): depth 1차, torso_stability 2차 / knee_alignment는 hard-fail 불가
+ */
+function getSquatMetricPriority(view) {
+  if (view === 'FRONT') {
+    return {
+      primary: ['knee_alignment'],
+      secondary: ['depth'],
+      disallowedHardFailMetrics: ['hip_hinge'],
+    };
+  }
+  if (view === 'SIDE') {
+    return {
+      primary: ['depth', 'hip_hinge'],
+      secondary: ['torso_stability'],
+      disallowedHardFailMetrics: ['knee_alignment'],
+    };
+  }
+  // DIAGONAL and unknown views
+  return {
+    primary: ['depth'],
+    secondary: ['torso_stability'],
+    disallowedHardFailMetrics: ['knee_alignment'],
+  };
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = {
+    ...(module.exports || {}),
+    getSquatMetricPriority,
+  };
+}

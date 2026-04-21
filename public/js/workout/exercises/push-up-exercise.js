@@ -13,7 +13,7 @@
  * 푸쉬업 전용 rep 추적/채점/품질 게이트
  */
 (function registerPushUpExerciseModule() {
-  const registry = window.WorkoutExerciseRegistry;
+  const registry = typeof window !== 'undefined' ? window.WorkoutExerciseRegistry : null;
   if (!registry) return;
 
   const REP_PHASES = {
@@ -862,3 +862,40 @@
   registry.register('push_up', pushUpExercise);
   registry.register('pushup', pushUpExercise);
 })();
+
+/**
+ * Normalize push-up evaluation so input-quality problems (low_confidence, view_mismatch)
+ * are never reported as exercise-module failures.  Those reasons belong exclusively
+ * to the common quality gate.
+ */
+function normalizePushUpEvaluation(evaluation) {
+  if (!evaluation) {
+    return { hardFailReason: null, softFailReasons: [] };
+  }
+
+  const GATE_ONLY_REASONS = ['low_confidence', 'view_mismatch'];
+
+  if (GATE_ONLY_REASONS.includes(evaluation.hardFailReason)) {
+    return {
+      ...evaluation,
+      hardFailReason: null,
+      softFailReasons: (evaluation.softFailReasons || []).filter(function (reason) {
+        return !GATE_ONLY_REASONS.includes(reason);
+      }),
+    };
+  }
+
+  return {
+    ...evaluation,
+    softFailReasons: (evaluation.softFailReasons || []).filter(function (reason) {
+      return !GATE_ONLY_REASONS.includes(reason);
+    }),
+  };
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = {
+    ...(module.exports || {}),
+    normalizePushUpEvaluation,
+  };
+}
