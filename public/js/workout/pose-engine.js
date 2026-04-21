@@ -842,6 +842,48 @@ class PoseEngine {
   }
 }
 
+/**
+ * Build a normalized quality-gate input summary from pose data.
+ * Called per frame by the session controller to feed evaluateQualityGate().
+ */
+function buildQualityGateInputs({
+  frameInclusionRatio,
+  keyJointVisibilityAverage,
+  minKeyJointVisibility,
+  estimatedView,
+  estimatedViewConfidence,
+  detectionConfidence,
+  trackingConfidence,
+  stableFrameCount,
+  unstableFrameRatio,
+  cameraDistanceOk,
+}) {
+  return {
+    frameInclusionRatio,
+    keyJointVisibilityAverage,
+    minKeyJointVisibility,
+    estimatedView,
+    estimatedViewConfidence,
+    detectionConfidence,
+    trackingConfidence,
+    stableFrameCount,
+    unstableFrameRatio,
+    cameraDistanceOk,
+  };
+}
+
 // 전역 접근 가능하도록 export
-window.PoseEngine = PoseEngine;
-window.LANDMARKS = LANDMARKS;
+if (typeof window !== 'undefined') {
+  window.PoseEngine = PoseEngine;
+  window.LANDMARKS = LANDMARKS;
+  window.buildQualityGateInputs = buildQualityGateInputs;
+}
+
+// CommonJS test exports
+if (typeof module !== 'undefined') {
+  module.exports = {
+    PoseEngine,
+    LANDMARKS,
+    buildQualityGateInputs,
+  };
+}

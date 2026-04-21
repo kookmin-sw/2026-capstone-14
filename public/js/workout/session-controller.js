@@ -36,6 +36,8 @@ async function initSession(workoutData) {
     bestHoldSec: 0,
     plankGoalReached: false,
     routineSetSyncPending: false,
+    pauseRepScoring: false,
+    currentWithholdReason: null,
   };
 
   const videoElement = document.getElementById("videoElement");
@@ -384,6 +386,12 @@ async function initSession(workoutData) {
 
   let noPersonCount = 0;
   const NO_PERSON_THRESHOLD = 30;
+  let qualityGateTracker = {
+    stableFrameCount: 0,
+    recentStabilityWindow: [],
+    isWithholding: false,
+    withholdReason: null,
+  };
   state.selectedView =
     normalizeViewCode(workoutData.selectedView) || resolveDefaultView();
   state.currentTargetSec = Math.max(0, Number(workoutData.plankTargetSec) || 0);
@@ -768,6 +776,50 @@ async function initSession(workoutData) {
 
     const { angles } = poseData;
     updateViewInfo(angles);
+
+    const stabilityMetrics = updateQualityGateTracker(poseData, qualityGateTracker);
+    const gateInputs = buildGateInputsFromPoseData(poseData, stabilityMetrics);
+    const gateContext = {
+      allowedViews: getAllowedViews(),
+      selectedView: state.selectedView,
+    };
+    const gateResult = (typeof evaluateQualityGate !== 'undefined')
+      ? evaluateQualityGate(gateInputs, gateContext)
+      : { result: 'pass', reason: null };
+    const gateThreshold = (typeof QUALITY_GATE_THRESHOLDS !== 'undefined')
+      ? QUALITY_GATE_THRESHOLDS.stableFrameCount
+      : 8;
+    const suppression = shouldSuppressScoring(gateResult, qualityGateTracker, gateThreshold);
+
+    if (suppression.suppress) {
+      state.pauseRepScoring = true;
+      state.currentWithholdReason = suppression.reason;
+      if (isTimeBasedExercise() && repCounter?.handleTimeBreak) {
+        repCounter.handleTimeBreak("QUALITY_GATE");
+        updatePlankRuntimeDisplay(repCounter.getTimeSummary());
+        updatePrimaryCounterDisplay();
+      }
+      if (poseEngine && poseEngine.setVisualFeedback) {
+        poseEngine.setVisualFeedback([]);
+      }
+      updateScoreDisplay({
+        score: 0,
+        breakdown: [],
+        gated: true,
+        message: mapWithholdReasonToMessage(suppression.reason),
+      });
+      showAlert("자세 인식 대기", mapWithholdReasonToMessage(suppression.reason));
+      if (sessionBuffer) {
+        sessionBuffer.addEvent("QUALITY_GATE_WITHHOLD", {
+          reason: suppression.reason,
+          stableFrameCount: stabilityMetrics.stableFrameCount,
+        });
+      }
+      return;
+    }
+
+    state.pauseRepScoring = false;
+    state.currentWithholdReason = null;
 
     const frameGate = getFrameGateResult(angles);
     if (!frameGate.isReady) {
@@ -1842,4 +1894,132 @@ async function initSession(workoutData) {
   await connectCameraSource(selectedCameraSource);
 }
 
-window.initSession = initSession;
+/**
+ * Map a quality-gate withhold reason code to a user-facing corrective message.
+ * Spec §8: withhold → corrective guidance, never low-score accumulation.
+ */
+function mapWithholdReasonToMessage(reason) {
+  const messages = {
+    body_not_fully_visible: '몸 전체가 화면에 보이도록 조금 더 뒤로 가 주세요.',
+    key_joints_not_visible: '팔과 다리가 잘 보이도록 자세와 카메라를 조정해 주세요.',
+    view_mismatch: '현재 운동은 옆면 시점이 필요합니다.',
+    unstable_tracking: '카메라를 고정하고 잠시 자세를 유지해 주세요.',
+    insufficient_stable_frames: '잠시 정지한 뒤 다시 시작해 주세요.',
+    camera_too_close_or_far: '카메라와의 거리를 조금 조정해 주세요.',
+    low_detection_confidence: '조명이 충분한지 확인해 주세요.',
+    low_tracking_confidence: '몸이 잘 보이도록 위치를 다시 맞춰 주세요.',
+  };
+  return messages[reason] || '카메라와 자세를 다시 맞춰 주세요.';
+}
+
+/**
+ * Determine whether scoring can resume after a withhold period.
+ * Spec §7.2 Rule 5: gate returns to pass only after stable-frame streak threshold is met.
+ */
+function shouldResumeScoring({ stableFrameCount, threshold }) {
+  return stableFrameCount >= threshold;
+}
+
+function isFrameStable(poseData) {
+  const quality = poseData?.angles?.quality;
+  if (!quality) return false;
+  return quality.level !== 'LOW' && quality.viewStability >= 0.5;
+}
+
+function createQualityGateTracker() {
+  return {
+    stableFrameCount: 0,
+    recentStabilityWindow: [],
+    isWithholding: false,
+    withholdReason: null,
+  };
+}
+
+function updateQualityGateTracker(poseData, tracker) {
+  const stable = isFrameStable(poseData);
+  tracker.recentStabilityWindow.push(stable);
+  const windowSize = 12;
+  if (tracker.recentStabilityWindow.length > windowSize) {
+    tracker.recentStabilityWindow.shift();
+  }
+  tracker.stableFrameCount = stable ? tracker.stableFrameCount + 1 : 0;
+
+  const unstableCount = tracker.recentStabilityWindow.filter(s => !s).length;
+  const unstableRatio = tracker.recentStabilityWindow.length > 0
+    ? unstableCount / tracker.recentStabilityWindow.length
+    : 0;
+
+  return {
+    stableFrameCount: tracker.stableFrameCount,
+    unstableFrameRatio: unstableRatio,
+  };
+}
+
+function buildGateInputsFromPoseData(poseData, stabilityMetrics) {
+  const quality = poseData?.angles?.quality || {};
+  const view = poseData?.angles?.view || 'UNKNOWN';
+
+  const rawInputs = {
+    frameInclusionRatio: quality.inFrameRatio ?? 1.0,
+    keyJointVisibilityAverage: quality.avgVisibility ?? 0,
+    minKeyJointVisibility: quality.visibleRatio ?? 0,
+    estimatedView: view,
+    estimatedViewConfidence: quality.viewStability ?? 0,
+    detectionConfidence: quality.avgVisibility ?? 0,
+    trackingConfidence: quality.avgVisibility ?? 0,
+    stableFrameCount: stabilityMetrics.stableFrameCount,
+    unstableFrameRatio: stabilityMetrics.unstableFrameRatio,
+    cameraDistanceOk: true,
+  };
+
+  // Use the canonical builder from pose-engine when available (browser runtime).
+  // Falls back to pass-through for test environments where pose-engine isn't loaded.
+  if (typeof buildQualityGateInputs === 'function') {
+    return buildQualityGateInputs(rawInputs);
+  }
+  return rawInputs;
+}
+
+function shouldSuppressScoring(gateResult, tracker, threshold) {
+  if (gateResult.result === 'withhold') {
+    tracker.isWithholding = true;
+    tracker.withholdReason = gateResult.reason;
+    return { suppress: true, reason: gateResult.reason };
+  }
+
+  if (tracker.isWithholding && !shouldResumeScoring({
+    stableFrameCount: tracker.stableFrameCount,
+    threshold,
+  })) {
+    return { suppress: true, reason: tracker.withholdReason || 'insufficient_stable_frames' };
+  }
+
+  tracker.isWithholding = false;
+  tracker.withholdReason = null;
+  return { suppress: false, reason: null };
+}
+
+if (typeof window !== 'undefined') {
+  window.initSession = initSession;
+  window.mapWithholdReasonToMessage = mapWithholdReasonToMessage;
+  window.shouldResumeScoring = shouldResumeScoring;
+  window.createQualityGateTracker = createQualityGateTracker;
+  window.updateQualityGateTracker = updateQualityGateTracker;
+  window.buildGateInputsFromPoseData = buildGateInputsFromPoseData;
+  window.shouldSuppressScoring = shouldSuppressScoring;
+  window.isFrameStable = isFrameStable;
+}
+
+// CommonJS test exports
+if (typeof module !== 'undefined') {
+  module.exports = {
+    initSession,
+    mapWithholdReasonToMessage,
+    shouldResumeScoring,
+    createQualityGateTracker,
+    updateQualityGateTracker,
+    buildGateInputsFromPoseData,
+    shouldSuppressScoring,
+    isFrameStable,
+  };
+}

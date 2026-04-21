@@ -661,5 +661,118 @@ class ScoringEngine {
   }
 }
 
+// ── Quality Gate Thresholds (Appendix A seed values) ──
+const QUALITY_GATE_THRESHOLDS = {
+  detectionConfidence: 0.50,
+  trackingConfidence: 0.50,
+  estimatedViewConfidence: 0.60,
+  keyJointVisibilityAverage: 0.65,
+  minKeyJointVisibility: 0.40,
+  stableFrameCount: 8,
+  stabilityWindow: 12,
+  unstableFrameRatio: 0.30,
+  frameInclusionRatio: 0.85,
+};
+
+/**
+ * Evaluate whether the current frame input quality is sufficient for scoring.
+ * Returns { result: 'pass' | 'withhold', reason: string | null }
+ *
+ * Input quality failures are NEVER delegated to exercise modules.
+ * Only pass → exercise module evaluation runs.
+ */
+function evaluateQualityGate(inputs, context) {
+  if (!inputs.cameraDistanceOk) {
+    return { result: 'withhold', reason: 'camera_too_close_or_far' };
+  }
+  if (inputs.detectionConfidence < QUALITY_GATE_THRESHOLDS.detectionConfidence) {
+    return { result: 'withhold', reason: 'low_detection_confidence' };
+  }
+  if (inputs.trackingConfidence < QUALITY_GATE_THRESHOLDS.trackingConfidence) {
+    return { result: 'withhold', reason: 'low_tracking_confidence' };
+  }
+  if (inputs.frameInclusionRatio < QUALITY_GATE_THRESHOLDS.frameInclusionRatio) {
+    return { result: 'withhold', reason: 'body_not_fully_visible' };
+  }
+  if (inputs.minKeyJointVisibility < QUALITY_GATE_THRESHOLDS.minKeyJointVisibility ||
+      inputs.keyJointVisibilityAverage < QUALITY_GATE_THRESHOLDS.keyJointVisibilityAverage) {
+    return { result: 'withhold', reason: 'key_joints_not_visible' };
+  }
+  if ((context && context.allowedViews || []).length > 0) {
+    const viewAllowed = context.allowedViews.includes(inputs.estimatedView);
+    if (!viewAllowed || inputs.estimatedViewConfidence < QUALITY_GATE_THRESHOLDS.estimatedViewConfidence) {
+      return { result: 'withhold', reason: 'view_mismatch' };
+    }
+  }
+  if (inputs.unstableFrameRatio >= QUALITY_GATE_THRESHOLDS.unstableFrameRatio) {
+    return { result: 'withhold', reason: 'unstable_tracking' };
+  }
+  if (inputs.stableFrameCount < QUALITY_GATE_THRESHOLDS.stableFrameCount) {
+    return { result: 'withhold', reason: 'insufficient_stable_frames' };
+  }
+  return { result: 'pass', reason: null };
+}
+
+/**
+ * Apply rep outcome state transitions based on gate result and exercise evaluation.
+ *
+ * Spec §7.2:
+ *   - withhold → rep discarded, no rep count increment
+ *   - hard_fail → rep recorded as hard_fail, no count increment, score cap 0
+ *   - soft_fail → rep recorded as soft_fail, count incremented, score cap applied
+ *   - scored → normal rep, count incremented
+ */
+function applyRepOutcome({ gateResult, repState, exerciseEvaluation }) {
+  if (gateResult === 'withhold') {
+    return {
+      repResult: 'withheld',
+      incrementRepCount: false,
+      discardActiveRep: Boolean(repState && repState.active),
+      scoreCapApplied: null,
+    };
+  }
+
+  // gateResult is 'pass' — evaluate exercise result
+  if (exerciseEvaluation && exerciseEvaluation.hardFailReason) {
+    return {
+      repResult: 'hard_fail',
+      incrementRepCount: false,
+      discardActiveRep: true,
+      scoreCapApplied: 0,
+    };
+  }
+
+  if (exerciseEvaluation && exerciseEvaluation.softFailReasons && exerciseEvaluation.softFailReasons.length > 0) {
+    return {
+      repResult: 'soft_fail',
+      incrementRepCount: true,
+      discardActiveRep: false,
+      scoreCapApplied: exerciseEvaluation.scoreCap || null,
+    };
+  }
+
+  return {
+    repResult: 'scored',
+    incrementRepCount: true,
+    discardActiveRep: false,
+    scoreCapApplied: null,
+  };
+}
+
 // 전역 접근 가능하도록 export
-window.ScoringEngine = ScoringEngine;
+if (typeof window !== 'undefined') {
+  window.ScoringEngine = ScoringEngine;
+  window.QUALITY_GATE_THRESHOLDS = QUALITY_GATE_THRESHOLDS;
+  window.evaluateQualityGate = evaluateQualityGate;
+  window.applyRepOutcome = applyRepOutcome;
+}
+
+// CommonJS test exports
+if (typeof module !== 'undefined') {
+  module.exports = {
+    ScoringEngine,
+    QUALITY_GATE_THRESHOLDS,
+    evaluateQualityGate,
+    applyRepOutcome,
+  };
+}
