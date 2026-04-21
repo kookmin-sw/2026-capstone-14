@@ -2,10 +2,22 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   QUALITY_GATE_THRESHOLDS,
+  GATE_ONLY_REASONS,
   evaluateQualityGate,
 } = require('../../public/js/workout/scoring-engine.js');
 
-test('evaluateQualityGate returns withhold for low key-joint visibility', () => {
+test('GATE_ONLY_REASONS is exported and contains exactly the canonical six codes', () => {
+  assert.ok(Array.isArray(GATE_ONLY_REASONS));
+  assert.equal(GATE_ONLY_REASONS.length, 6);
+  assert.ok(GATE_ONLY_REASONS.includes('out_of_frame'));
+  assert.ok(GATE_ONLY_REASONS.includes('tracked_joints_low'));
+  assert.ok(GATE_ONLY_REASONS.includes('view_unstable'));
+  assert.ok(GATE_ONLY_REASONS.includes('view_mismatch'));
+  assert.ok(GATE_ONLY_REASONS.includes('low_confidence'));
+  assert.ok(GATE_ONLY_REASONS.includes('joints_missing'));
+});
+
+test('evaluateQualityGate returns withhold for low key-joint visibility → joints_missing', () => {
   const result = evaluateQualityGate({
     frameInclusionRatio: 0.92,
     keyJointVisibilityAverage: 0.51,
@@ -23,10 +35,11 @@ test('evaluateQualityGate returns withhold for low key-joint visibility', () => 
   });
 
   assert.equal(result.result, 'withhold');
-  assert.equal(result.reason, 'key_joints_not_visible');
+  assert.equal(result.reason, 'joints_missing');
+  assert.ok(GATE_ONLY_REASONS.includes(result.reason));
 });
 
-test('evaluateQualityGate returns withhold for body not fully visible', () => {
+test('evaluateQualityGate returns withhold for body not fully visible → out_of_frame', () => {
   const result = evaluateQualityGate({
     frameInclusionRatio: 0.70,
     keyJointVisibilityAverage: 0.80,
@@ -44,7 +57,8 @@ test('evaluateQualityGate returns withhold for body not fully visible', () => {
   });
 
   assert.equal(result.result, 'withhold');
-  assert.equal(result.reason, 'body_not_fully_visible');
+  assert.equal(result.reason, 'out_of_frame');
+  assert.ok(GATE_ONLY_REASONS.includes(result.reason));
 });
 
 test('evaluateQualityGate returns withhold for view mismatch (disallowed view)', () => {
@@ -66,6 +80,7 @@ test('evaluateQualityGate returns withhold for view mismatch (disallowed view)',
 
   assert.equal(result.result, 'withhold');
   assert.equal(result.reason, 'view_mismatch');
+  assert.ok(GATE_ONLY_REASONS.includes(result.reason));
 });
 
 test('evaluateQualityGate returns withhold for view mismatch (low confidence)', () => {
@@ -87,9 +102,10 @@ test('evaluateQualityGate returns withhold for view mismatch (low confidence)', 
 
   assert.equal(result.result, 'withhold');
   assert.equal(result.reason, 'view_mismatch');
+  assert.ok(GATE_ONLY_REASONS.includes(result.reason));
 });
 
-test('evaluateQualityGate returns withhold for unstable tracking', () => {
+test('evaluateQualityGate returns withhold for unstable tracking → view_unstable', () => {
   const result = evaluateQualityGate({
     frameInclusionRatio: 0.95,
     keyJointVisibilityAverage: 0.80,
@@ -107,10 +123,11 @@ test('evaluateQualityGate returns withhold for unstable tracking', () => {
   });
 
   assert.equal(result.result, 'withhold');
-  assert.equal(result.reason, 'unstable_tracking');
+  assert.equal(result.reason, 'view_unstable');
+  assert.ok(GATE_ONLY_REASONS.includes(result.reason));
 });
 
-test('evaluateQualityGate returns withhold for insufficient stable frames', () => {
+test('evaluateQualityGate returns withhold for insufficient stable frames → view_unstable', () => {
   const result = evaluateQualityGate({
     frameInclusionRatio: 0.95,
     keyJointVisibilityAverage: 0.80,
@@ -128,10 +145,11 @@ test('evaluateQualityGate returns withhold for insufficient stable frames', () =
   });
 
   assert.equal(result.result, 'withhold');
-  assert.equal(result.reason, 'insufficient_stable_frames');
+  assert.equal(result.reason, 'view_unstable');
+  assert.ok(GATE_ONLY_REASONS.includes(result.reason));
 });
 
-test('evaluateQualityGate returns withhold for camera too close or far', () => {
+test('evaluateQualityGate returns withhold for camera too close or far → out_of_frame', () => {
   const result = evaluateQualityGate({
     frameInclusionRatio: 0.95,
     keyJointVisibilityAverage: 0.80,
@@ -149,10 +167,11 @@ test('evaluateQualityGate returns withhold for camera too close or far', () => {
   });
 
   assert.equal(result.result, 'withhold');
-  assert.equal(result.reason, 'camera_too_close_or_far');
+  assert.equal(result.reason, 'out_of_frame');
+  assert.ok(GATE_ONLY_REASONS.includes(result.reason));
 });
 
-test('evaluateQualityGate returns withhold for low detection confidence', () => {
+test('evaluateQualityGate returns withhold for low detection confidence → low_confidence', () => {
   const result = evaluateQualityGate({
     frameInclusionRatio: 0.95,
     keyJointVisibilityAverage: 0.80,
@@ -170,10 +189,11 @@ test('evaluateQualityGate returns withhold for low detection confidence', () => 
   });
 
   assert.equal(result.result, 'withhold');
-  assert.equal(result.reason, 'low_detection_confidence');
+  assert.equal(result.reason, 'low_confidence');
+  assert.ok(GATE_ONLY_REASONS.includes(result.reason));
 });
 
-test('evaluateQualityGate returns withhold for low tracking confidence', () => {
+test('evaluateQualityGate returns withhold for low tracking confidence → tracked_joints_low', () => {
   const result = evaluateQualityGate({
     frameInclusionRatio: 0.95,
     keyJointVisibilityAverage: 0.80,
@@ -191,7 +211,8 @@ test('evaluateQualityGate returns withhold for low tracking confidence', () => {
   });
 
   assert.equal(result.result, 'withhold');
-  assert.equal(result.reason, 'low_tracking_confidence');
+  assert.equal(result.reason, 'tracked_joints_low');
+  assert.ok(GATE_ONLY_REASONS.includes(result.reason));
 });
 
 test('evaluateQualityGate returns pass when all seed thresholds are met', () => {
@@ -231,6 +252,26 @@ test('evaluateQualityGate passes without context (no allowedViews)', () => {
 
   assert.equal(result.result, 'pass');
   assert.equal(result.reason, null);
+});
+
+test('evaluateQualityGate never emits a reason outside GATE_ONLY_REASONS', () => {
+  // Exhaustive withhold-path tests: every withhold reason must be in GATE_ONLY_REASONS
+  const testCases = [
+    { inputs: { cameraDistanceOk: false, detectionConfidence: 0.9, trackingConfidence: 0.9, frameInclusionRatio: 0.95, keyJointVisibilityAverage: 0.8, minKeyJointVisibility: 0.7, estimatedView: 'SIDE', estimatedViewConfidence: 0.8, stableFrameCount: 10, unstableFrameRatio: 0.05 }, context: { allowedViews: ['SIDE'] } },
+    { inputs: { cameraDistanceOk: true, detectionConfidence: 0.3, trackingConfidence: 0.9, frameInclusionRatio: 0.95, keyJointVisibilityAverage: 0.8, minKeyJointVisibility: 0.7, estimatedView: 'SIDE', estimatedViewConfidence: 0.8, stableFrameCount: 10, unstableFrameRatio: 0.05 }, context: { allowedViews: ['SIDE'] } },
+    { inputs: { cameraDistanceOk: true, detectionConfidence: 0.9, trackingConfidence: 0.3, frameInclusionRatio: 0.95, keyJointVisibilityAverage: 0.8, minKeyJointVisibility: 0.7, estimatedView: 'SIDE', estimatedViewConfidence: 0.8, stableFrameCount: 10, unstableFrameRatio: 0.05 }, context: { allowedViews: ['SIDE'] } },
+    { inputs: { cameraDistanceOk: true, detectionConfidence: 0.9, trackingConfidence: 0.9, frameInclusionRatio: 0.5, keyJointVisibilityAverage: 0.8, minKeyJointVisibility: 0.7, estimatedView: 'SIDE', estimatedViewConfidence: 0.8, stableFrameCount: 10, unstableFrameRatio: 0.05 }, context: { allowedViews: ['SIDE'] } },
+    { inputs: { cameraDistanceOk: true, detectionConfidence: 0.9, trackingConfidence: 0.9, frameInclusionRatio: 0.95, keyJointVisibilityAverage: 0.5, minKeyJointVisibility: 0.3, estimatedView: 'SIDE', estimatedViewConfidence: 0.8, stableFrameCount: 10, unstableFrameRatio: 0.05 }, context: { allowedViews: ['SIDE'] } },
+    { inputs: { cameraDistanceOk: true, detectionConfidence: 0.9, trackingConfidence: 0.9, frameInclusionRatio: 0.95, keyJointVisibilityAverage: 0.8, minKeyJointVisibility: 0.7, estimatedView: 'FRONT', estimatedViewConfidence: 0.8, stableFrameCount: 10, unstableFrameRatio: 0.05 }, context: { allowedViews: ['SIDE'] } },
+    { inputs: { cameraDistanceOk: true, detectionConfidence: 0.9, trackingConfidence: 0.9, frameInclusionRatio: 0.95, keyJointVisibilityAverage: 0.8, minKeyJointVisibility: 0.7, estimatedView: 'SIDE', estimatedViewConfidence: 0.8, stableFrameCount: 10, unstableFrameRatio: 0.5 }, context: { allowedViews: ['SIDE'] } },
+    { inputs: { cameraDistanceOk: true, detectionConfidence: 0.9, trackingConfidence: 0.9, frameInclusionRatio: 0.95, keyJointVisibilityAverage: 0.8, minKeyJointVisibility: 0.7, estimatedView: 'SIDE', estimatedViewConfidence: 0.8, stableFrameCount: 3, unstableFrameRatio: 0.05 }, context: { allowedViews: ['SIDE'] } },
+  ];
+
+  for (const tc of testCases) {
+    const result = evaluateQualityGate(tc.inputs, tc.context);
+    assert.equal(result.result, 'withhold');
+    assert.ok(GATE_ONLY_REASONS.includes(result.reason), `reason "${result.reason}" must be in GATE_ONLY_REASONS`);
+  }
 });
 
 test('QUALITY_GATE_THRESHOLDS has all seed values from spec', () => {

@@ -437,17 +437,9 @@ async function initSession(workoutData) {
     };
   }
 
-  function getFrameGateResult(angles) {
-    if (!exerciseModule?.getFrameGate) {
-      return { isReady: true };
-    }
-
-    return (
-      exerciseModule.getFrameGate(angles, getExerciseRuntime({ angles })) || {
-        isReady: true,
-      }
-    );
-  }
+  // REMOVED: getFrameGateResult — gate authority belongs exclusively to scoring-engine.js
+  // The common quality gate (evaluateQualityGate) is the sole pass/withhold decision-maker.
+  // Exercise modules must not emit gating decisions (spec §3.1, §3.2).
 
   async function initAIEngines() {
     try {
@@ -821,27 +813,9 @@ async function initSession(workoutData) {
     state.pauseRepScoring = false;
     state.currentWithholdReason = null;
 
-    const frameGate = getFrameGateResult(angles);
-    if (!frameGate.isReady) {
-      if (isTimeBasedExercise() && repCounter?.handleTimeBreak) {
-        repCounter.handleTimeBreak(frameGate.reason || "FRAME_GATE");
-        updatePlankRuntimeDisplay(repCounter.getTimeSummary());
-        updatePrimaryCounterDisplay();
-      }
-      if (poseEngine && poseEngine.setVisualFeedback) {
-        poseEngine.setVisualFeedback([]);
-      }
-      updateScoreDisplay({
-        score: 0,
-        breakdown: [],
-        gated: true,
-        message: frameGate.message,
-      });
-      if (frameGate.message) {
-        showAlert("자세 인식 대기", frameGate.message);
-      }
-      return;
-    }
+    // REMOVED: exercise module frame gate — authority consolidated in scoring-engine.js
+    // The quality gate (evaluateQualityGate) above already decides pass/withhold.
+    // If gate passes, proceed directly to scoring.
 
     const rawScoreResult = scoringEngine.calculate(angles);
     const liveScoreResult = getLiveFeedbackResult(rawScoreResult, angles);
@@ -1900,14 +1874,12 @@ async function initSession(workoutData) {
  */
 function mapWithholdReasonToMessage(reason) {
   const messages = {
-    body_not_fully_visible: '몸 전체가 화면에 보이도록 조금 더 뒤로 가 주세요.',
-    key_joints_not_visible: '팔과 다리가 잘 보이도록 자세와 카메라를 조정해 주세요.',
+    out_of_frame: '머리부터 발끝까지 프레임 안에 들어오도록 위치를 조정해주세요.',
+    joints_missing: '어깨부터 손목, 골반과 하체까지 전신이 보이도록 카메라를 맞춰주세요.',
+    tracked_joints_low: '팔과 하체가 모두 보이도록 카메라를 조금 더 멀리 두세요.',
+    view_unstable: '몸 방향이 흔들리고 있습니다. 측면 자세를 유지해주세요.',
     view_mismatch: '현재 운동은 옆면 시점이 필요합니다.',
-    unstable_tracking: '카메라를 고정하고 잠시 자세를 유지해 주세요.',
-    insufficient_stable_frames: '잠시 정지한 뒤 다시 시작해 주세요.',
-    camera_too_close_or_far: '카메라와의 거리를 조금 조정해 주세요.',
-    low_detection_confidence: '조명이 충분한지 확인해 주세요.',
-    low_tracking_confidence: '몸이 잘 보이도록 위치를 다시 맞춰 주세요.',
+    low_confidence: '카메라 위치와 조명을 조정한 뒤 다시 자세를 잡아주세요.',
   };
   return messages[reason] || '카메라와 자세를 다시 맞춰 주세요.';
 }

@@ -28,6 +28,22 @@
   const pushUpExercise = {
     code: 'push_up',
 
+    /**
+     * Declarative requirement metadata consumed by the common quality gate.
+     * Spec §4.2 — exercise modules provide requirements as data, not as decision logic.
+     */
+    requirements: {
+      requiredViews: ['SIDE'],
+      importantJoints: [
+        'left_shoulder', 'right_shoulder',
+        'left_elbow', 'right_elbow',
+        'left_hip', 'right_hip',
+        'left_knee', 'right_knee',
+        'left_ankle', 'right_ankle',
+      ],
+      minJointVisibility: 0.40,
+    },
+
     getDefaultProfileMetrics() {
       return [
         {
@@ -137,77 +153,6 @@
       };
     },
 
-    getFrameGate(angles, runtime) {
-      const quality = angles?.quality || {};
-      const view = angles?.view || 'UNKNOWN';
-      const selectedView = runtime?.selectedView || runtime?.state?.selectedView || null;
-      const trackedJointRatio = quality.trackedJointRatio ?? 0;
-      const inFrameRatio = quality.inFrameRatio ?? 0;
-      const score = quality.score ?? 0;
-      const viewStability = quality.viewStability ?? 0;
-      const elbowAngle = runtime?.repCounter?.getAngleValue ? runtime.repCounter.getAngleValue(angles, 'elbow_angle') : null;
-      const hipAngle = runtime?.repCounter?.getAngleValue ? runtime.repCounter.getAngleValue(angles, 'hip_angle') : null;
-      const spineAngle = runtime?.repCounter?.getAngleValue ? runtime.repCounter.getAngleValue(angles, 'spine_angle') : null;
-
-      if (!Number.isFinite(elbowAngle) || !Number.isFinite(hipAngle) || !Number.isFinite(spineAngle)) {
-        return {
-          isReady: false,
-          reason: 'joints_missing',
-          message: '어깨부터 손목, 골반과 하체까지 전신이 보이도록 카메라를 맞춰주세요'
-        };
-      }
-
-      if (trackedJointRatio < 0.65) {
-        return {
-          isReady: false,
-          reason: 'tracked_joints_low',
-          message: '팔과 하체가 모두 보이도록 카메라를 조금 더 멀리 두세요'
-        };
-      }
-
-      if (inFrameRatio < 0.7) {
-        return {
-          isReady: false,
-          reason: 'out_of_frame',
-          message: '머리부터 발끝까지 프레임 안에 들어오도록 위치를 조정해주세요'
-        };
-      }
-
-      if (view === 'UNKNOWN') {
-        return {
-          isReady: false,
-          reason: 'view_unknown',
-          message: '몸을 측면으로 돌려 푸쉬업 자세를 잡아주세요'
-        };
-      }
-
-      if (selectedView && view !== selectedView) {
-        return {
-          isReady: false,
-          reason: 'view_mismatch',
-          message: '푸쉬업은 측면 자세에서만 채점합니다. 몸을 옆으로 돌려주세요'
-        };
-      }
-
-      if (viewStability < 0.55) {
-        return {
-          isReady: false,
-          reason: 'view_unstable',
-          message: '몸 방향이 흔들리고 있습니다. 측면 자세를 유지해주세요'
-        };
-      }
-
-      if (score < 0.45) {
-        return {
-          isReady: false,
-          reason: 'quality_low',
-          message: '카메라 위치와 조명을 조정한 뒤 다시 자세를 잡아주세요'
-        };
-      }
-
-      return { isReady: true };
-    },
-
     startRepTracking(repCounter, now) {
       repCounter.currentPhase = REP_PHASES.NEUTRAL;
       repCounter.currentRepSummary = createRepSummary(repCounter, now);
@@ -290,9 +235,9 @@
       const duration = Number.isFinite(repRecord?.duration) ? repRecord.duration : summary.durationMs;
 
       const hardFails = [];
-      if (view !== 'SIDE') {
-        hardFails.push('view_mismatch');
-      }
+      // Note: view_mismatch and low_confidence are gate-owned reasons (spec §3.2).
+      // The common quality gate in scoring-engine.js handles these BEFORE exercise
+      // evaluation runs, so they cannot reach this code path.
       if (!summary.flags?.bottomReached || bottomElbow == null || bottomElbow > 110) {
         hardFails.push('depth_not_reached');
       }
@@ -301,9 +246,6 @@
       }
       if (minHip != null && minHip < 140) {
         hardFails.push('body_line_broken');
-      }
-      if (confidence.level === 'LOW') {
-        hardFails.push('low_confidence');
       }
 
       const metricPlan = getMetricPlan({
@@ -342,9 +284,6 @@
       const baseScore = totalWeight > 0 ? (weightedScore / totalWeight) : (repRecord.score || 0);
       let finalScore = baseScore * (confidence.factor || 0.7);
 
-      if (hardFails.includes('view_mismatch')) {
-        finalScore = Math.min(finalScore, 50);
-      }
       if (hardFails.includes('depth_not_reached')) {
         finalScore = Math.min(finalScore, 55);
       }
@@ -352,9 +291,6 @@
         finalScore = Math.min(finalScore, 65);
       }
       if (hardFails.includes('body_line_broken')) {
-        finalScore = Math.min(finalScore, 60);
-      }
-      if (hardFails.includes('low_confidence')) {
         finalScore = Math.min(finalScore, 60);
       }
 
@@ -767,12 +703,8 @@
   }
 
   function pickFeedback({ hardFails, breakdown, confidence, minHip, spineRange }) {
-    if (hardFails.includes('low_confidence') || confidence.level === 'LOW') {
-      return '카메라에 전신이 잘 보이도록 위치를 다시 맞춰주세요';
-    }
-    if (hardFails.includes('view_mismatch')) {
-      return '몸을 측면으로 유지한 상태에서 푸쉬업을 진행해주세요';
-    }
+    // Note: low_confidence and view_mismatch are gate-owned (spec §3.2).
+    // The common quality gate handles these BEFORE exercise evaluation runs.
     if (hardFails.includes('depth_not_reached')) {
       return '가슴을 조금 더 내려주세요';
     }
@@ -867,6 +799,10 @@
  * Normalize push-up evaluation so input-quality problems (low_confidence, view_mismatch)
  * are never reported as exercise-module failures.  Those reasons belong exclusively
  * to the common quality gate.
+ *
+ * NOTE: This function is kept for backward compatibility with existing tests.
+ * After Task 3 refactoring, the push-up exercise no longer emits gate-owned reasons,
+ * so this normalization is effectively a no-op for new code paths.
  */
 function normalizePushUpEvaluation(evaluation) {
   if (!evaluation) {

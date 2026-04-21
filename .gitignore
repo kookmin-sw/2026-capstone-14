@@ -127,3 +127,5 @@ graphify-out/
 opencode.json
 .worktrees/
 .gemini/
+opencode.jsonc
+AGENTS.md

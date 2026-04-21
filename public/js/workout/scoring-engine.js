@@ -675,6 +675,20 @@ const QUALITY_GATE_THRESHOLDS = {
 };
 
 /**
+ * Canonical gate-owned reason codes.
+ * These are the ONLY reason codes that evaluateQualityGate may emit.
+ * Exercise modules must never produce these codes.
+ */
+const GATE_ONLY_REASONS = [
+  'out_of_frame',
+  'tracked_joints_low',
+  'view_unstable',
+  'view_mismatch',
+  'low_confidence',
+  'joints_missing',
+];
+
+/**
  * Evaluate whether the current frame input quality is sufficient for scoring.
  * Returns { result: 'pass' | 'withhold', reason: string | null }
  *
@@ -683,20 +697,20 @@ const QUALITY_GATE_THRESHOLDS = {
  */
 function evaluateQualityGate(inputs, context) {
   if (!inputs.cameraDistanceOk) {
-    return { result: 'withhold', reason: 'camera_too_close_or_far' };
+    return { result: 'withhold', reason: 'out_of_frame' };
   }
   if (inputs.detectionConfidence < QUALITY_GATE_THRESHOLDS.detectionConfidence) {
-    return { result: 'withhold', reason: 'low_detection_confidence' };
+    return { result: 'withhold', reason: 'low_confidence' };
   }
   if (inputs.trackingConfidence < QUALITY_GATE_THRESHOLDS.trackingConfidence) {
-    return { result: 'withhold', reason: 'low_tracking_confidence' };
+    return { result: 'withhold', reason: 'tracked_joints_low' };
   }
   if (inputs.frameInclusionRatio < QUALITY_GATE_THRESHOLDS.frameInclusionRatio) {
-    return { result: 'withhold', reason: 'body_not_fully_visible' };
+    return { result: 'withhold', reason: 'out_of_frame' };
   }
   if (inputs.minKeyJointVisibility < QUALITY_GATE_THRESHOLDS.minKeyJointVisibility ||
       inputs.keyJointVisibilityAverage < QUALITY_GATE_THRESHOLDS.keyJointVisibilityAverage) {
-    return { result: 'withhold', reason: 'key_joints_not_visible' };
+    return { result: 'withhold', reason: 'joints_missing' };
   }
   if ((context && context.allowedViews || []).length > 0) {
     const viewAllowed = context.allowedViews.includes(inputs.estimatedView);
@@ -705,10 +719,10 @@ function evaluateQualityGate(inputs, context) {
     }
   }
   if (inputs.unstableFrameRatio >= QUALITY_GATE_THRESHOLDS.unstableFrameRatio) {
-    return { result: 'withhold', reason: 'unstable_tracking' };
+    return { result: 'withhold', reason: 'view_unstable' };
   }
   if (inputs.stableFrameCount < QUALITY_GATE_THRESHOLDS.stableFrameCount) {
-    return { result: 'withhold', reason: 'insufficient_stable_frames' };
+    return { result: 'withhold', reason: 'view_unstable' };
   }
   return { result: 'pass', reason: null };
 }
@@ -763,6 +777,7 @@ function applyRepOutcome({ gateResult, repState, exerciseEvaluation }) {
 if (typeof window !== 'undefined') {
   window.ScoringEngine = ScoringEngine;
   window.QUALITY_GATE_THRESHOLDS = QUALITY_GATE_THRESHOLDS;
+  window.GATE_ONLY_REASONS = GATE_ONLY_REASONS;
   window.evaluateQualityGate = evaluateQualityGate;
   window.applyRepOutcome = applyRepOutcome;
 }
@@ -772,6 +787,7 @@ if (typeof module !== 'undefined') {
   module.exports = {
     ScoringEngine,
     QUALITY_GATE_THRESHOLDS,
+    GATE_ONLY_REASONS,
     evaluateQualityGate,
     applyRepOutcome,
   };
