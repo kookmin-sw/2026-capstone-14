@@ -1,3 +1,25 @@
+<%
+  const dailyDoneCount = dailyQuests.filter((quest) => quest.status === 'DONE').length;
+  const weeklyDoneCount = weeklyQuests.filter((quest) => quest.status === 'DONE').length;
+  const tierState = tierProgress || {};
+  const formatPointSource = (sourceType) => {
+    if (sourceType === 'QUEST') return '퀘스트';
+    if (sourceType === 'BONUS') return '보너스';
+    if (sourceType === 'TUTORIAL') return '튜토리얼';
+    return '조정';
+  };
+  const formatPointHistoryDate = (value) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString('ko-KR', {
+      month: 'numeric',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+%>
+
 <div class="page active">
   <section class="page-header">
     <div>
@@ -6,29 +28,50 @@
     </div>
   </section>
 
-  <div class="grid three">
-    <!-- 포인트 & 티어 카드 -->
-    <div class="card hero">
+  <div class="grid two quest-overview-grid">
+    <div class="card hero tier-hero">
       <div class="card-header">
-        <h3>나의 포인트</h3>
+        <div>
+          <h3>나의 포인트</h3>
+          <p class="hero-subtitle">현재 티어 진행도</p>
+        </div>
+        <span class="tier-badge"><%= currentTier.name %></span>
       </div>
+
       <div class="hero-metrics">
         <div>
           <span class="metric"><%= totalPoints.toLocaleString() %></span>
           <span class="metric-label">P</span>
         </div>
       </div>
-      <div class="tier-info">
-        <span class="tier-badge"><%= currentTier.name %></span>
-        <% if (nextTier) { %>
-          <p class="tier-progress">다음 티어까지 <strong><%= (nextTier.min_points - totalPoints).toLocaleString() %>P</strong></p>
+
+      <div class="tier-copy">
+        <% if (tierState.isMaxTier) { %>
+          <p class="tier-progress">최고 티어를 달성했어요.</p>
+          <span class="tier-progress-caption">현재 티어 기준 완료</span>
         <% } else { %>
-          <p class="tier-progress">최고 티어 달성!</p>
+          <p class="tier-progress">
+            다음 티어 <strong><%= nextTier.name %></strong>까지
+            <strong><%= tierState.remainingPoints.toLocaleString() %>P</strong>
+          </p>
+          <span class="tier-progress-caption">
+            <%= tierState.pointsInTier.toLocaleString() %> / <%= tierState.pointsNeeded.toLocaleString() %>P
+          </span>
         <% } %>
       </div>
+
+      <div class="tier-progress-rail" aria-label="티어 진행도">
+        <div class="tier-progress-fill" style="width: <%= tierState.percent || 0 %>%"></div>
+      </div>
+
+      <% if (!tierState.isMaxTier) { %>
+        <div class="tier-progress-scale">
+          <span><%= tierState.startPoints.toLocaleString() %>P</span>
+          <span><%= tierState.endPoints.toLocaleString() %>P</span>
+        </div>
+      <% } %>
     </div>
 
-    <!-- 오늘의 운동 현황 -->
     <div class="card">
       <div class="card-header">
         <h3>오늘의 현황</h3>
@@ -44,45 +87,25 @@
         </div>
       </div>
     </div>
-
-    <!-- 빠른 액션 -->
-    <div class="card">
-      <div class="card-header">
-        <h3>빠른 시작</h3>
-      </div>
-      <div class="quick-actions">
-        <a href="/workout/free" class="quick-action-btn">
-          <span>자율 운동</span>
-        </a>
-        <a href="/routine" class="quick-action-btn">
-          <span>루틴 운동</span>
-        </a>
-      </div>
-    </div>
   </div>
 
-  <!-- 일일 퀘스트 섹션 -->
   <div class="quest-section">
     <div class="section-header">
       <h2>일일 퀘스트</h2>
-      <span class="quest-summary">
-        <%= dailyQuests.filter(q => q.status === 'DONE').length %>/<%= dailyQuests.length %> 완료
-      </span>
+      <span class="quest-summary"><%= dailyDoneCount %>/<%= dailyQuests.length %> 완료</span>
     </div>
-    
+
     <% if (dailyQuests.length === 0) { %>
       <div class="empty-state">
         <p>오늘의 퀘스트가 없습니다.</p>
-        <p class="muted">운동을 시작하면 퀘스트가 자동으로 할당됩니다!</p>
+        <p class="muted">운동을 시작하면 퀘스트가 자동으로 할당됩니다.</p>
       </div>
     <% } else { %>
       <div class="quest-grid">
-        <% dailyQuests.forEach(quest => { %>
+        <% dailyQuests.forEach((quest) => { %>
           <div class="quest-card <%= quest.status === 'DONE' ? 'completed' : '' %>" data-quest-id="<%= quest.user_quest_id %>">
             <div class="quest-card-header">
-              <span class="quest-type <%= quest.quest_template.type.toLowerCase() %>">
-                <%= quest.type_label %>
-              </span>
+              <span class="quest-type <%= quest.quest_template.type.toLowerCase() %>"><%= quest.type_label %></span>
               <span class="quest-reward">+<%= quest.quest_template.reward_points %>P</span>
             </div>
             <h4 class="quest-title"><%= quest.quest_template.title %></h4>
@@ -92,7 +115,7 @@
               </div>
             <% } else { %>
               <div class="quest-progress-bar">
-                <% 
+                <%
                   const progressView = quest.progress_view || {};
                   const percent = progressView.percent || 0;
                   const canClaim = progressView.canClaim;
@@ -115,28 +138,23 @@
     <% } %>
   </div>
 
-  <!-- 주간 퀘스트 섹션 -->
   <div class="quest-section">
     <div class="section-header">
       <h2>주간 퀘스트</h2>
-      <span class="quest-summary">
-        <%= weeklyQuests.filter(q => q.status === 'DONE').length %>/<%= weeklyQuests.length %> 완료
-      </span>
+      <span class="quest-summary"><%= weeklyDoneCount %>/<%= weeklyQuests.length %> 완료</span>
     </div>
-    
+
     <% if (weeklyQuests.length === 0) { %>
       <div class="empty-state">
         <p>이번 주 퀘스트가 없습니다.</p>
-        <p class="muted">매주 새로운 퀘스트가 할당됩니다!</p>
+        <p class="muted">매주 새로운 퀘스트가 할당됩니다.</p>
       </div>
     <% } else { %>
       <div class="quest-grid">
-        <% weeklyQuests.forEach(quest => { %>
+        <% weeklyQuests.forEach((quest) => { %>
           <div class="quest-card weekly <%= quest.status === 'DONE' ? 'completed' : '' %>" data-quest-id="<%= quest.user_quest_id %>">
             <div class="quest-card-header">
-              <span class="quest-type <%= quest.quest_template.type.toLowerCase() %>">
-                <%= quest.type_label %>
-              </span>
+              <span class="quest-type <%= quest.quest_template.type.toLowerCase() %>"><%= quest.type_label %></span>
               <span class="quest-reward">+<%= quest.quest_template.reward_points %>P</span>
             </div>
             <h4 class="quest-title"><%= quest.quest_template.title %></h4>
@@ -146,7 +164,7 @@
               </div>
             <% } else { %>
               <div class="quest-progress-bar">
-                <% 
+                <%
                   const progressView = quest.progress_view || {};
                   const percent = progressView.percent || 0;
                   const canClaim = progressView.canClaim;
@@ -169,24 +187,23 @@
     <% } %>
   </div>
 
-  <!-- 포인트 히스토리 -->
   <div class="card">
     <div class="card-header">
       <h3>최근 포인트 이력</h3>
+      <span class="history-caption">최신 5건</span>
     </div>
     <% if (pointHistory.length === 0) { %>
       <p class="muted">아직 포인트 이력이 없습니다.</p>
     <% } else { %>
       <ul class="point-history">
-        <% pointHistory.forEach(record => { %>
+        <% pointHistory.forEach((record) => { %>
           <li class="point-record">
             <div class="point-info">
-              <span class="point-source <%= record.source_type.toLowerCase() %>">
-                <%= record.source_type === 'QUEST' ? '퀘스트' : 
-                    record.source_type === 'BONUS' ? '보너스' : 
-                    record.source_type === 'TUTORIAL' ? '튜토리얼' : '조정' %>
-              </span>
               <span class="point-note"><%= record.note || '포인트 획득' %></span>
+              <div class="point-meta">
+                <span class="point-source <%= record.source_type.toLowerCase() %>"><%= formatPointSource(record.source_type) %></span>
+                <span class="point-date"><%= formatPointHistoryDate(record.created_at) %></span>
+              </div>
             </div>
             <div class="point-value <%= record.points >= 0 ? 'positive' : 'negative' %>">
               <%= record.points >= 0 ? '+' : '' %><%= record.points %>P
@@ -196,43 +213,32 @@
       </ul>
     <% } %>
   </div>
-
-  <!-- 티어 정보 -->
-  <div class="card">
-    <div class="card-header">
-      <h3>티어 시스템</h3>
-    </div>
-    <div class="tier-list">
-      <div class="tier-item <%= currentTier.tier === 1 ? 'current' : '' %>">
-        <span class="tier-icon">🥉</span>
-        <span class="tier-name">브론즈</span>
-        <span class="tier-requirement">0P ~</span>
-      </div>
-      <div class="tier-item <%= currentTier.tier === 2 ? 'current' : '' %>">
-        <span class="tier-icon">🥈</span>
-        <span class="tier-name">실버</span>
-        <span class="tier-requirement">1,000P ~</span>
-      </div>
-      <div class="tier-item <%= currentTier.tier === 3 ? 'current' : '' %>">
-        <span class="tier-icon">🥇</span>
-        <span class="tier-name">골드</span>
-        <span class="tier-requirement">5,000P ~</span>
-      </div>
-      <div class="tier-item <%= currentTier.tier === 4 ? 'current' : '' %>">
-        <span class="tier-icon">💎</span>
-        <span class="tier-name">다이아</span>
-        <span class="tier-requirement">15,000P ~</span>
-      </div>
-      <div class="tier-item <%= currentTier.tier === 5 ? 'current' : '' %>">
-        <span class="tier-icon">👑</span>
-        <span class="tier-name">마스터</span>
-        <span class="tier-requirement">50,000P ~</span>
-      </div>
-    </div>
-  </div>
 </div>
 
 <style>
+  .quest-overview-grid {
+    align-items: stretch;
+  }
+
+  .quest-overview-grid > .card {
+    gap: 12px;
+    padding: 16px 18px;
+  }
+
+  .quest-overview-grid .card-header {
+    align-items: flex-start;
+  }
+
+  .tier-hero {
+    gap: 12px;
+  }
+
+  .hero-subtitle {
+    margin: 2px 0 0;
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 12px;
+  }
+
   .quest-section {
     margin-top: 24px;
   }
@@ -241,6 +247,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 12px;
     margin-bottom: 16px;
   }
 
@@ -256,6 +263,62 @@
     border-radius: 999px;
     font-size: 13px;
     font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .tier-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .tier-badge {
+    background: rgba(255, 255, 255, 0.22);
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 14px;
+    width: fit-content;
+  }
+
+  .tier-progress {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+
+  .tier-progress-caption {
+    color: rgba(255, 255, 255, 0.82);
+    font-size: 12px;
+  }
+
+  .tier-progress-rail {
+    width: 100%;
+    height: 8px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.22);
+  }
+
+  .tier-progress-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #ffffff 0%, #c7d2fe 100%);
+  }
+
+  .tier-progress-scale {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.78);
+  }
+
+  .quest-overview-grid .stat-list {
+    gap: 10px;
+  }
+
+  .quest-overview-grid .stat {
+    padding: 10px 12px;
   }
 
   .quest-grid {
@@ -293,6 +356,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 12px;
   }
 
   .quest-type {
@@ -326,6 +390,7 @@
   .quest-reward {
     font-weight: 700;
     color: var(--accent);
+    white-space: nowrap;
   }
 
   .quest-title {
@@ -353,7 +418,7 @@
     font-size: 13px;
     font-weight: 600;
     color: var(--muted);
-    min-width: 50px;
+    min-width: 52px;
     text-align: right;
   }
 
@@ -378,44 +443,69 @@
     margin-top: 8px;
   }
 
-  /* 포인트 히스토리 */
+  .history-caption {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
   .point-history {
     list-style: none;
     margin: 0;
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
   }
 
   .point-record {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 16px;
+    gap: 16px;
+    padding: 14px 16px;
     background: var(--input-bg);
-    border-radius: 12px;
+    border-radius: 14px;
   }
 
   .point-info {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-  }
-
-  .point-source {
-    font-size: 12px;
-    font-weight: 600;
+    gap: 6px;
+    min-width: 0;
   }
 
   .point-note {
     font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    word-break: keep-all;
+  }
+
+  .point-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .point-source {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    background: rgba(15, 23, 42, 0.08);
     color: var(--text);
   }
 
   .point-value {
     font-size: 16px;
     font-weight: 700;
+    white-space: nowrap;
   }
 
   .point-value.positive {
@@ -426,95 +516,6 @@
     color: var(--danger);
   }
 
-  /* 티어 */
-  .tier-info {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-top: 8px;
-  }
-
-  .tier-badge {
-    background: rgba(255, 255, 255, 0.25);
-    padding: 6px 16px;
-    border-radius: 999px;
-    font-weight: 700;
-    font-size: 14px;
-    width: fit-content;
-  }
-
-  .tier-progress {
-    margin: 0;
-    font-size: 13px;
-    opacity: 0.9;
-  }
-
-  .tier-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-  }
-
-  .tier-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px 16px;
-    background: var(--input-bg);
-    border-radius: 12px;
-    border: 2px solid transparent;
-    transition: all 0.2s ease;
-  }
-
-  .tier-item.current {
-    background: linear-gradient(135deg, rgba(91, 108, 255, 0.15) 0%, rgba(91, 108, 255, 0.25) 100%);
-    border-color: var(--primary);
-  }
-
-  .tier-icon {
-    font-size: 20px;
-  }
-
-  .tier-name {
-    font-weight: 600;
-  }
-
-  .tier-requirement {
-    font-size: 12px;
-    color: var(--muted);
-  }
-
-  /* 빠른 액션 */
-  .quick-actions {
-    display: flex;
-    gap: 12px;
-  }
-
-  .quick-action-btn {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    padding: 16px;
-    background: var(--input-bg);
-    border-radius: 12px;
-    text-decoration: none;
-    color: var(--text);
-    transition: all 0.2s ease;
-  }
-
-  .quick-action-btn:hover {
-    background: var(--tab-bg);
-    transform: translateY(-2px);
-    text-decoration: none;
-  }
-
-  .quick-icon {
-    font-size: 24px;
-  }
-
-  /* 클레임 버튼 */
   .claim-btn {
     width: 100%;
     padding: 12px 16px;
@@ -544,8 +545,8 @@
   }
 
   .claim-btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
+    opacity: 0.65;
+    cursor: wait;
     animation: none;
   }
 
@@ -554,21 +555,20 @@
     50% { box-shadow: 0 0 0 8px rgba(0, 194, 168, 0); }
   }
 
-  /* 토스트 알림 */
   .toast {
     position: fixed;
-    bottom: 24px;
     right: 24px;
+    bottom: 24px;
+    z-index: 1000;
     padding: 16px 24px;
-    background: #0f172a;
-    color: white;
     border-radius: 12px;
+    color: white;
     font-weight: 500;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+    background: #0f172a;
     transform: translateY(100px);
     opacity: 0;
     transition: all 0.3s ease;
-    z-index: 1000;
   }
 
   .toast.show {
@@ -585,12 +585,22 @@
   }
 
   @media (max-width: 768px) {
+    .section-header {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
     .quest-grid {
       grid-template-columns: 1fr;
     }
 
-    .tier-list {
+    .point-record {
+      align-items: flex-start;
       flex-direction: column;
+    }
+
+    .point-value {
+      align-self: flex-end;
     }
 
     .toast {
@@ -602,10 +612,44 @@
 </style>
 
 <script>
-  // 퀘스트 보상 클레임
+  function showToast(message, type = 'success') {
+    const existingToast = document.querySelector('.toast');
+    if (existingToast) {
+      existingToast.remove();
+    }
+
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+
+    setTimeout(() => toast.classList.add('show'), 10);
+    setTimeout(() => {
+      toast.classList.remove('show');
+      setTimeout(() => toast.remove(), 300);
+    }, 3000);
+  }
+
+  (function restoreQuestToast() {
+    try {
+      const raw = sessionStorage.getItem('questToast');
+      if (!raw) {
+        return;
+      }
+
+      sessionStorage.removeItem('questToast');
+      const saved = JSON.parse(raw);
+      if (saved && saved.message) {
+        showToast(saved.message, saved.type || 'success');
+      }
+    } catch (error) {
+      console.error('Toast restore error:', error);
+    }
+  })();
+
   async function claimQuest(questId, btn) {
     btn.disabled = true;
-    btn.textContent = '처리 중...';
+    btn.textContent = '갱신 중...';
 
     try {
       const response = await fetch(`/api/quest/${questId}/claim`, {
@@ -617,36 +661,23 @@
 
       const data = await response.json();
 
-      if (data.success) {
-        // 성공 시 카드 업데이트
-        const card = document.querySelector(`[data-quest-id="${questId}"]`);
-        if (card) {
-          card.classList.add('completed');
-          const progressBar = card.querySelector('.quest-progress-bar');
-          const claimBtn = card.querySelector('.claim-btn');
-          
-          if (progressBar) {
-            progressBar.innerHTML = '<div class="quest-status completed"><span>완료!</span></div>';
-          }
-          if (claimBtn) {
-            claimBtn.remove();
-          }
-        }
-
-        // 포인트 업데이트
-        const pointsDisplay = document.querySelector('.metric');
-        if (pointsDisplay) {
-          const currentPoints = parseInt(pointsDisplay.textContent.replace(/,/g, '')) || 0;
-          const awardedPoints = Number.isFinite(Number(data.points)) ? Number(data.points) : 0;
-          pointsDisplay.textContent = (currentPoints + awardedPoints).toLocaleString();
-        }
-
-        showToast(`${data.message}`, 'success');
-      } else {
+      if (!response.ok || !data.success) {
         showToast(data.error || '오류가 발생했습니다.', 'error');
         btn.disabled = false;
         btn.textContent = '보상 받기';
+        return;
       }
+
+      try {
+        sessionStorage.setItem('questToast', JSON.stringify({
+          message: data.message,
+          type: 'success'
+        }));
+      } catch (storageError) {
+        console.error('Toast save error:', storageError);
+      }
+
+      window.location.reload();
     } catch (error) {
       console.error('Claim error:', error);
       showToast('네트워크 오류가 발생했습니다.', 'error');
@@ -654,28 +685,4 @@
       btn.textContent = '보상 받기';
     }
   }
-
-  // 토스트 알림 표시
-  function showToast(message, type = 'success') {
-    // 기존 토스트 제거
-    const existingToast = document.querySelector('.toast');
-    if (existingToast) {
-      existingToast.remove();
-    }
-
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.textContent = message;
-    document.body.appendChild(toast);
-
-    // 표시
-    setTimeout(() => toast.classList.add('show'), 10);
-
-    // 3초 후 숨기기
-    setTimeout(() => {
-      toast.classList.remove('show');
-      setTimeout(() => toast.remove(), 300);
-    }, 3000);
-  }
 </script>
-

@@ -320,6 +320,46 @@ const getUserPointSummary = async (userId) => {
     };
 };
 
+const buildTierProgress = (pointSummary = {}) => {
+    const totalPoints = toNonNegativeNumber(pointSummary.totalPoints, 0);
+    const currentTier = pointSummary.currentTier || { tier: 1, min_points: 0, name: '브론즈' };
+    const nextTier = pointSummary.nextTier || null;
+
+    const startPoints = toNonNegativeNumber(currentTier.min_points, 0);
+
+    if (!nextTier) {
+        return {
+            currentTier,
+            nextTier: null,
+            startPoints,
+            endPoints: startPoints,
+            currentPoints: totalPoints,
+            pointsInTier: Math.max(0, totalPoints - startPoints),
+            pointsNeeded: 0,
+            remainingPoints: 0,
+            percent: 100,
+            isMaxTier: true
+        };
+    }
+
+    const endPoints = Math.max(startPoints, toNonNegativeNumber(nextTier.min_points, startPoints));
+    const pointsNeeded = Math.max(1, endPoints - startPoints);
+    const pointsInTier = Math.max(0, totalPoints - startPoints);
+
+    return {
+        currentTier,
+        nextTier,
+        startPoints,
+        endPoints,
+        currentPoints: totalPoints,
+        pointsInTier,
+        pointsNeeded,
+        remainingPoints: Math.max(0, endPoints - totalPoints),
+        percent: clampPercent((pointsInTier / pointsNeeded) * 100),
+        isMaxTier: false
+    };
+};
+
 const weightedPick = (templates) => {
     if (!Array.isArray(templates) || templates.length === 0) {
         return null;
@@ -910,7 +950,7 @@ const getQuestPage = async (req, res, next) => {
                 .select('ledger_id, source_type, source_id, points, note, created_at')
                 .eq('user_id', userId)
                 .order('created_at', { ascending: false })
-                .limit(10)
+                .limit(5)
         ]);
 
         if (pointHistoryResult.error) {
@@ -960,6 +1000,7 @@ const getQuestPage = async (req, res, next) => {
             totalPoints: pointSummary.totalPoints,
             currentTier: pointSummary.currentTier,
             nextTier: pointSummary.nextTier,
+            tierProgress: buildTierProgress(pointSummary),
             pointHistory: pointHistoryResult.data || [],
             stats: {
                 todaySessions: todaySessionsResult.count || 0,
