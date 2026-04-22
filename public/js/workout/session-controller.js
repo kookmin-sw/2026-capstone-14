@@ -53,6 +53,7 @@ async function initSession(workoutData) {
   const repCountEl = document.getElementById("repCount");
   const repCountLabelEl = document.getElementById("repCountLabel");
   const setCountEl = document.getElementById("setCount");
+  const routineProgressEl = document.getElementById("routineProgress");
   const timerValueEl = document.getElementById("timerValue");
   const timerLabelEl = document.getElementById("timerLabel");
   const restTimerEl = document.getElementById("restTimer");
@@ -76,6 +77,11 @@ async function initSession(workoutData) {
   const plankStateLabelEl = document.getElementById("plankStateLabel");
   const plankGoalLabelEl = document.getElementById("plankGoalLabel");
   const plankSegmentLabelEl = document.getElementById("plankSegmentLabel");
+  let routineProgressCountEl = null;
+  let routineProgressPercentEl = null;
+  let routineCurrentExerciseEl = null;
+  let routineTargetSummaryEl = null;
+  let routineStepListEl = null;
 
   const normalizeViewCode = (value) => {
     const normalized = (value || "").toString().trim().toUpperCase();
@@ -147,6 +153,97 @@ async function initSession(workoutData) {
     return workoutData.routine?.routine_setup?.[state.currentStepIndex] || null;
   }
 
+  function getRoutineSteps() {
+    return Array.isArray(workoutData.routine?.routine_setup)
+      ? workoutData.routine.routine_setup
+      : [];
+  }
+
+  function getRoutineTargetSummary(step = {}) {
+    const targetType = normalizeRoutineTargetType(step.target_type);
+    const targetValue = Math.max(1, Number(step.target_value) || 1);
+    const unit = targetType === "TIME" ? "\uCD08" : "\uD68C";
+    const sets = Math.max(1, Number(step.sets) || 1);
+
+    return {
+      targetType,
+      targetValue,
+      unit,
+      sets,
+      text: `\uBAA9\uD45C ${targetValue}${unit} x ${sets}\uC138\uD2B8`,
+    };
+  }
+
+  function setupRoutineProgressUi() {
+    if (!routineProgressEl || !routineStepEl) return;
+
+    const card = routineProgressEl.closest(".progress-card");
+    const progressTrack = routineProgressEl.parentElement;
+    const labelEl = card?.querySelector('span.muted:not(#routineStep)');
+    if (!card || !progressTrack || !labelEl || card.dataset.enhanced === "true") {
+      return;
+    }
+
+    card.dataset.enhanced = "true";
+    card.classList.add("routine-progress-card");
+    progressTrack.classList.add("routine-progress-track");
+
+    const header = document.createElement("div");
+    header.className = "routine-progress-header";
+
+    const titleGroup = document.createElement("div");
+    titleGroup.className = "routine-progress-title-group";
+    routineCurrentExerciseEl = document.createElement("strong");
+    routineCurrentExerciseEl.className = "routine-progress-current";
+    titleGroup.append(labelEl, routineCurrentExerciseEl);
+
+    const stats = document.createElement("div");
+    stats.className = "routine-progress-stats";
+    routineProgressCountEl = document.createElement("strong");
+    routineProgressCountEl.className = "routine-progress-count";
+    routineProgressPercentEl = document.createElement("span");
+    routineProgressPercentEl.className = "routine-progress-percent";
+    stats.append(routineProgressCountEl, routineProgressPercentEl);
+
+    header.append(titleGroup, stats);
+
+    const meta = document.createElement("div");
+    meta.className = "routine-progress-meta";
+    routineTargetSummaryEl = document.createElement("span");
+    routineTargetSummaryEl.className = "routine-progress-target";
+    meta.append(routineStepEl, routineTargetSummaryEl);
+
+    routineStepListEl = document.createElement("div");
+    routineStepListEl.className = "routine-step-list";
+    routineStepListEl.setAttribute("aria-label", "\uB8E8\uD2F4 \uB2E8\uACC4");
+
+    getRoutineSteps().forEach((step, index) => {
+      const chip = document.createElement("div");
+      chip.className = "routine-step-chip";
+      chip.setAttribute("data-routine-step-index", String(index));
+
+      const chipIndex = document.createElement("span");
+      chipIndex.className = "routine-step-index";
+      chipIndex.textContent = String(index + 1);
+
+      const chipCopy = document.createElement("div");
+      chipCopy.className = "routine-step-copy";
+
+      const chipTitle = document.createElement("strong");
+      chipTitle.textContent =
+        step?.exercise?.name || `${index + 1}\uBC88\uC9F8 \uC6B4\uB3D9`;
+
+      const chipMeta = document.createElement("span");
+      chipMeta.textContent = getRoutineTargetSummary(step).text;
+
+      chipCopy.append(chipTitle, chipMeta);
+      chip.append(chipIndex, chipCopy);
+      routineStepListEl.append(chip);
+    });
+
+    card.replaceChildren(header, progressTrack, meta, routineStepListEl);
+  }
+
   function isRoutineTimeTarget() {
     if (workoutData.mode !== "ROUTINE" || !workoutData.routine) return false;
     const step = getCurrentRoutineStep();
@@ -177,19 +274,50 @@ async function initSession(workoutData) {
     )
       return;
 
-    const steps = Array.isArray(workoutData.routine.routine_setup)
-      ? workoutData.routine.routine_setup
-      : [];
+    setupRoutineProgressUi();
+
+    const steps = getRoutineSteps();
     if (steps.length === 0) return;
 
     const stepIndex = Math.min(state.currentStepIndex, steps.length - 1);
     const step = steps[stepIndex] || {};
-    const targetType = normalizeRoutineTargetType(step.target_type);
-    const targetValue = Math.max(1, Number(step.target_value) || 1);
-    const unit = targetType === "TIME" ? "\uCD08" : "\uD68C";
-    const sets = Math.max(1, Number(step.sets) || 1);
+    const targetSummary = getRoutineTargetSummary(step);
+    const progressPercent = Math.round(((stepIndex + 1) / steps.length) * 100);
 
-    routineStepEl.textContent = `${stepIndex + 1} / ${steps.length} \uC6B4\uB3D9 \u00B7 \uBAA9\uD45C ${targetValue}${unit} \u00D7 ${sets}\uC138\uD2B8`;
+    routineStepEl.textContent = `\uD604\uC7AC ${stepIndex + 1} / ${steps.length} \uC6B4\uB3D9`;
+
+    if (routineProgressEl) {
+      routineProgressEl.style.width = `${progressPercent}%`;
+    }
+    if (routineProgressCountEl) {
+      routineProgressCountEl.textContent = `${stepIndex + 1} / ${steps.length}`;
+    }
+    if (routineProgressPercentEl) {
+      routineProgressPercentEl.textContent = `${progressPercent}%`;
+    }
+    if (routineCurrentExerciseEl) {
+      routineCurrentExerciseEl.textContent =
+        step?.exercise?.name || `${stepIndex + 1}\uBC88\uC9F8 \uC6B4\uB3D9`;
+    }
+    if (routineTargetSummaryEl) {
+      routineTargetSummaryEl.textContent = targetSummary.text;
+    }
+    if (routineStepListEl) {
+      routineStepListEl
+        .querySelectorAll("[data-routine-step-index]")
+        .forEach((chip) => {
+          const chipIndex = Number(chip.getAttribute("data-routine-step-index"));
+          chip.classList.toggle("is-complete", chipIndex < stepIndex);
+          chip.classList.toggle("is-active", chipIndex === stepIndex);
+          chip.classList.toggle("is-upcoming", chipIndex > stepIndex);
+
+          if (chipIndex === stepIndex) {
+            chip.setAttribute("aria-current", "step");
+          } else {
+            chip.removeAttribute("aria-current");
+          }
+        });
+    }
   }
 
   function syncPlankTargetUi() {

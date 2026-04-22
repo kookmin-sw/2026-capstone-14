@@ -1,8 +1,64 @@
 /* 운동 화면 전용 스타일 */
 
+:root {
+  --workout-bg: radial-gradient(circle at top, #f8fbff 0%, #eef4ff 44%, #f8fafc 100%);
+  --workout-text: #0f172a;
+  --workout-muted: #64748b;
+  --workout-header-bg: rgba(255, 255, 255, 0.88);
+  --workout-card-bg: rgba(255, 255, 255, 0.82);
+  --workout-panel-bg: rgba(248, 250, 252, 0.88);
+  --workout-frame-bg: radial-gradient(circle at top, #f8fbff 0%, #dbeafe 100%);
+  --workout-overlay: rgba(248, 250, 252, 0.84);
+  --workout-border: rgba(148, 163, 184, 0.24);
+  --workout-shadow: 0 18px 45px rgba(15, 23, 42, 0.12);
+  --workout-ghost-bg: rgba(226, 232, 240, 0.8);
+  --workout-ghost-hover: rgba(203, 213, 225, 0.95);
+  --workout-ghost-text: #1e293b;
+  --workout-progress-track: rgba(148, 163, 184, 0.22);
+  --workout-progress-fill: linear-gradient(90deg, #2563eb 0%, #0ea5e9 100%);
+  --workout-score-gradient: linear-gradient(135deg, #2563eb, #14b8a6);
+  --workout-routine-card-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(239, 246, 255, 0.92) 100%);
+  --workout-routine-chip-bg: rgba(255, 255, 255, 0.9);
+  --workout-routine-chip-border: rgba(148, 163, 184, 0.24);
+  --workout-routine-active-bg: linear-gradient(135deg, rgba(37, 99, 235, 0.16), rgba(20, 184, 166, 0.2));
+  --workout-routine-active-border: rgba(37, 99, 235, 0.45);
+  --workout-routine-complete-bg: rgba(16, 185, 129, 0.12);
+  --workout-routine-complete-border: rgba(16, 185, 129, 0.32);
+  --workout-input-bg: rgba(255, 255, 255, 0.96);
+  --workout-input-border: rgba(148, 163, 184, 0.3);
+}
+
+[data-theme="dark"] {
+  --workout-bg: radial-gradient(circle at top, #1b2235 0%, #111827 48%, #090d14 100%);
+  --workout-text: #f8fafc;
+  --workout-muted: #94a3b8;
+  --workout-header-bg: rgba(15, 23, 42, 0.92);
+  --workout-card-bg: rgba(30, 41, 59, 0.74);
+  --workout-panel-bg: rgba(30, 41, 59, 0.62);
+  --workout-frame-bg: #020617;
+  --workout-overlay: rgba(15, 23, 42, 0.82);
+  --workout-border: rgba(255, 255, 255, 0.1);
+  --workout-shadow: 0 16px 42px rgba(0, 0, 0, 0.36);
+  --workout-ghost-bg: rgba(255, 255, 255, 0.1);
+  --workout-ghost-hover: rgba(255, 255, 255, 0.16);
+  --workout-ghost-text: #e2e8f0;
+  --workout-progress-track: rgba(255, 255, 255, 0.1);
+  --workout-progress-fill: linear-gradient(90deg, #5b6cff 0%, #38bdf8 100%);
+  --workout-score-gradient: linear-gradient(135deg, #5b6cff, #7c54ff);
+  --workout-routine-card-bg: linear-gradient(180deg, rgba(15, 23, 42, 0.9) 0%, rgba(30, 41, 59, 0.72) 100%);
+  --workout-routine-chip-bg: rgba(15, 23, 42, 0.54);
+  --workout-routine-chip-border: rgba(148, 163, 184, 0.2);
+  --workout-routine-active-bg: linear-gradient(135deg, rgba(91, 108, 255, 0.2), rgba(56, 189, 248, 0.16));
+  --workout-routine-active-border: rgba(91, 108, 255, 0.46);
+  --workout-routine-complete-bg: rgba(16, 185, 129, 0.16);
+  --workout-routine-complete-border: rgba(16, 185, 129, 0.28);
+  --workout-input-bg: rgba(15, 23, 42, 0.7);
+  --workout-input-border: rgba(148, 163, 184, 0.18);
+}
+
 .workout-body {
-  background: #0f172a;
-  color: #f1f5f9;
+  background: var(--workout-bg);
+  color: var(--workout-text);
 }
 
 .workout-app {
@@ -469,6 +525,248 @@
   color: #94a3b8;
 }
 
+.workout-header {
+  background: var(--workout-header-bg);
+  border-bottom-color: var(--workout-border);
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.workout-title h2,
+.workout-sidebar h3,
+.workout-sidebar h4,
+.counter-value,
+.timer-value {
+  color: var(--workout-text);
+}
+
+.workout-title .muted,
+.workout-sidebar .muted,
+.camera-overlay .muted,
+.counter-label,
+.timer-label,
+.rest-label,
+.workout-body .modal-content .muted {
+  color: var(--workout-muted);
+}
+
+.camera-frame {
+  background: var(--workout-frame-bg);
+  border-color: var(--workout-border);
+  box-shadow: var(--workout-shadow);
+}
+
+.camera-overlay {
+  background: var(--workout-overlay);
+  color: var(--workout-text);
+}
+
+.source-select {
+  background: var(--workout-panel-bg);
+  border-color: var(--workout-border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+.score-detail .score-item,
+.score-item {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.workout-sidebar .card {
+  background: var(--workout-card-bg);
+  border-color: var(--workout-border);
+  box-shadow: var(--workout-shadow);
+}
+
+.score-card .score {
+  background: var(--workout-score-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.progress-card {
+  margin-top: 18px;
+  padding: 16px;
+  border-top: none;
+  border-radius: 18px;
+  background: var(--workout-panel-bg);
+  border: 1px solid var(--workout-border);
+}
+
+.progress-card .progress {
+  background: var(--workout-progress-track);
+}
+
+.progress-bar {
+  background: var(--workout-progress-fill);
+}
+
+.routine-progress-card {
+  gap: 14px;
+  background: var(--workout-routine-card-bg);
+}
+
+.routine-progress-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.routine-progress-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.routine-progress-current {
+  font-size: 20px;
+  line-height: 1.2;
+  color: var(--workout-text);
+}
+
+.routine-progress-stats {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  text-align: right;
+}
+
+.routine-progress-count {
+  font-size: 18px;
+  color: var(--workout-text);
+}
+
+.routine-progress-percent {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #eff6ff;
+  background: var(--workout-progress-fill);
+}
+
+.routine-progress-track {
+  height: 12px;
+}
+
+.routine-progress-track .progress-bar {
+  transition: width 0.25s ease;
+}
+
+.routine-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  margin-bottom: 8px;
+}
+
+.routine-progress-target {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--workout-text);
+}
+
+.routine-step-list {
+  display: grid;
+  gap: 10px;
+}
+
+.routine-step-chip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid var(--workout-routine-chip-border);
+  background: var(--workout-routine-chip-bg);
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.routine-step-chip.is-active {
+  background: var(--workout-routine-active-bg);
+  border-color: var(--workout-routine-active-border);
+  transform: translateY(-1px);
+}
+
+.routine-step-chip.is-complete {
+  background: var(--workout-routine-complete-bg);
+  border-color: var(--workout-routine-complete-border);
+}
+
+.routine-step-chip.is-upcoming {
+  opacity: 0.78;
+}
+
+.routine-step-index {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--workout-text);
+  background: rgba(255, 255, 255, 0.75);
+  flex-shrink: 0;
+}
+
+[data-theme="dark"] .routine-step-index {
+  background: rgba(15, 23, 42, 0.78);
+}
+
+.routine-step-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.routine-step-copy strong {
+  font-size: 14px;
+  color: var(--workout-text);
+}
+
+.routine-step-copy span {
+  font-size: 12px;
+  color: var(--workout-muted);
+}
+
+.workout-sidebar .ghost {
+  background: var(--workout-ghost-bg);
+  color: var(--workout-ghost-text);
+  border-color: var(--workout-border);
+}
+
+.workout-sidebar .ghost:hover {
+  background: var(--workout-ghost-hover);
+}
+
+.workout-body .modal-content {
+  background: var(--workout-card-bg);
+  border-color: var(--workout-border);
+  color: var(--workout-text);
+}
+
+.plank-target-custom .form-input {
+  background: var(--workout-input-bg);
+  border: 1px solid var(--workout-input-border);
+  color: var(--workout-text);
+}
+
+.plank-target-custom .form-input:focus {
+  outline: none;
+  border-color: rgba(99, 102, 241, 0.7);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
 /* 반응형 */
 @media (max-width: 1024px) {
   .workout-main {
@@ -487,6 +785,17 @@
 }
 
 @media (max-width: 640px) {
+  .routine-progress-header,
+  .routine-progress-meta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .routine-progress-stats {
+    align-items: flex-start;
+    text-align: left;
+  }
+
   .workout-sidebar {
     grid-template-columns: 1fr;
   }
