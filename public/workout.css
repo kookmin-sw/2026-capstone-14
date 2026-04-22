@@ -115,7 +115,6 @@
   width: 100%;
   height: 100%;
   object-fit: contain;
-  transform: scaleX(-1);
 }
 
 .camera-frame canvas {
@@ -124,6 +123,10 @@
   left: 0;
   width: 100%;
   height: 100%;
+}
+
+.camera-frame[data-preview-mirrored="true"] video,
+.camera-frame[data-preview-mirrored="true"] canvas {
   transform: scaleX(-1);
 }
 

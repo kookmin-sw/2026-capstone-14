@@ -8,6 +8,7 @@ const {
   buildGateInputsFromPoseData,
   shouldSuppressScoring,
   isFrameStable,
+  shouldMirrorSourcePreview,
 } = require('../../public/js/workout/session-controller.js');
 
 test('mapWithholdReasonToMessage returns correct messages for all reason codes', () => {
@@ -120,6 +121,13 @@ test('isFrameStable returns false for LOW quality or low viewStability', () => {
   assert.equal(isFrameStable(makePoseData('LOW', 0.8)), false);
   assert.equal(isFrameStable(makePoseData('HIGH', 0.4)), false);
   assert.equal(isFrameStable(makePoseData('LOW', 0.3)), false);
+});
+
+test('shouldMirrorSourcePreview mirrors only explicit front-camera sources', () => {
+  assert.equal(shouldMirrorSourcePreview('webcam'), false);
+  assert.equal(shouldMirrorSourcePreview('screen'), false);
+  assert.equal(shouldMirrorSourcePreview('mobile_rear'), false);
+  assert.equal(shouldMirrorSourcePreview('mobile_front'), true);
 });
 
 test('updateQualityGateTracker increments stableFrameCount on consecutive stable frames', () => {

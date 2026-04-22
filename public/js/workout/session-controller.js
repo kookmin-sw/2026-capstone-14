@@ -42,6 +42,7 @@ async function initSession(workoutData) {
 
   const videoElement = document.getElementById("videoElement");
   const poseCanvas = document.getElementById("poseCanvas");
+  const cameraFrame = document.getElementById("cameraFrame");
   const cameraOverlay = document.getElementById("cameraOverlay");
   const statusBadge = document.getElementById("statusBadge");
   const liveScoreEl = document.getElementById("liveScore");
@@ -351,6 +352,14 @@ async function initSession(workoutData) {
   const sessionCamera = new SessionCamera(videoElement, poseCanvas);
   let wakeLock = null;
 
+  function applyPreviewOrientation(sourceType) {
+    if (!cameraFrame) return;
+    cameraFrame.setAttribute(
+      "data-preview-mirrored",
+      shouldMirrorSourcePreview(sourceType) ? "true" : "false",
+    );
+  }
+
   async function requestWakeLock() {
     try {
       if ("wakeLock" in navigator) {
@@ -473,6 +482,7 @@ async function initSession(workoutData) {
   }
 
   async function connectCameraSource(sourceType) {
+    applyPreviewOrientation(sourceType);
     cameraOverlay.innerHTML = `
       <div style="display:flex; flex-direction:column; align-items:center; gap:12px;">
         <style>@keyframes spin-anim { 100% { transform: rotate(360deg); } }</style>
@@ -1855,6 +1865,7 @@ async function initSession(workoutData) {
   setupSourceSelectors();
   setupViewSelectors();
   setupPlankTargetControls();
+  applyPreviewOrientation(selectedCameraSource);
   if (isPlankExerciseCode()) {
     if (workoutData.mode === "ROUTINE") {
       applyTargetSec(getCurrentTargetSec() || 0);
@@ -1896,6 +1907,10 @@ function isFrameStable(poseData) {
   const quality = poseData?.angles?.quality;
   if (!quality) return false;
   return quality.level !== 'LOW' && quality.viewStability >= 0.5;
+}
+
+function shouldMirrorSourcePreview(sourceType) {
+  return sourceType === 'mobile_front';
 }
 
 function createQualityGateTracker() {
@@ -1980,6 +1995,7 @@ if (typeof window !== 'undefined') {
   window.buildGateInputsFromPoseData = buildGateInputsFromPoseData;
   window.shouldSuppressScoring = shouldSuppressScoring;
   window.isFrameStable = isFrameStable;
+  window.shouldMirrorSourcePreview = shouldMirrorSourcePreview;
 }
 
 // CommonJS test exports
@@ -1993,5 +2009,6 @@ if (typeof module !== 'undefined') {
     buildGateInputsFromPoseData,
     shouldSuppressScoring,
     isFrameStable,
+    shouldMirrorSourcePreview,
   };
 }
