@@ -9,7 +9,7 @@ const {
   shouldSuppressScoring,
   isFrameStable,
   shouldMirrorSourcePreview,
-} = require('../../public/js/workout/session-controller.js');
+} = require('../../public/js/workout/quality-gate-session.js');
 
 test('mapWithholdReasonToMessage returns correct messages for all reason codes', () => {
   assert.equal(

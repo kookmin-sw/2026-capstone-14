@@ -60,7 +60,7 @@ test('applyRepOutcome with gate=pass delegates to exercise evaluation for state'
 // Cross-module reason-code integrity (spec §3.1, §3.2)
 // ---------------------------------------------------------------------------
 
-const { mapWithholdReasonToMessage } = require('../../public/js/workout/session-controller.js');
+const { mapWithholdReasonToMessage } = require('../../public/js/workout/quality-gate-session.js');
 const { normalizePushUpEvaluation } = require('../../public/js/workout/exercises/push-up-exercise.js');
 
 test('every GATE_ONLY_REASON maps to a dedicated, non-fallback UX message', () => {
