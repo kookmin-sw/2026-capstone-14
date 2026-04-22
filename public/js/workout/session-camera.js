@@ -10,6 +10,11 @@ class SessionCamera {
     this.videoElement = videoElement;
     this.canvasElement = canvasElement;
     this.currentStream = null;
+    this.syncCanvasSize = null;
+    this.resizeObserver = null;
+    this.windowResizeHandler = null;
+    this.videoResizeHandler = null;
+    this.syncFrameId = null;
   }
 
   /**
@@ -66,21 +71,83 @@ class SessionCamera {
 
     video.srcObject = stream;
 
-    const syncCanvasSize = () => {
-      if (video.videoWidth && video.videoHeight) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+    const container = canvas.parentElement;
+
+    this.syncCanvasSize = () => {
+      if (!video.videoWidth || !video.videoHeight || !container) return;
+
+      const { width: containerW, height: containerH } = container.getBoundingClientRect();
+      if (!containerW || !containerH) return;
+
+      const videoRatio = video.videoWidth / video.videoHeight;
+      const containerRatio = containerW / containerH;
+
+      let displayW, displayH, offsetX, offsetY;
+
+      if (videoRatio > containerRatio) {
+        displayW = containerW;
+        displayH = containerW / videoRatio;
+        offsetX = 0;
+        offsetY = (containerH - displayH) / 2;
+      } else {
+        displayH = containerH;
+        displayW = containerH * videoRatio;
+        offsetX = (containerW - displayW) / 2;
+        offsetY = 0;
       }
+
+      // 낮은 해상도 낼까봐 코너 케이스 방지
+      displayW = Math.max(1, displayW);
+      displayH = Math.max(1, displayH);
+
+      // MediaPipe 랜드마크는 원본 비디오 해상도 기준 0~1 normalized.
+      // 캔버스 낮은 해상도도 원본 해상도로 유지하여 좌표 비율을 맞춤.
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      // CSS로 실제 표시 크기와 위치를 비디오 object-fit 영역과 동일하게 맞춤
+      canvas.style.left = offsetX + 'px';
+      canvas.style.top = offsetY + 'px';
+      canvas.style.width = displayW + 'px';
+      canvas.style.height = displayH + 'px';
+    };
+
+    const scheduleCanvasSync = () => {
+      if (!this.syncCanvasSize) return;
+
+      if (this.syncFrameId !== null) {
+        window.cancelAnimationFrame(this.syncFrameId);
+      }
+
+      this.syncFrameId = window.requestAnimationFrame(() => {
+        this.syncFrameId = null;
+        if (this.syncCanvasSize) {
+          this.syncCanvasSize();
+        }
+      });
     };
 
     video.onloadedmetadata = () => {
-      syncCanvasSize();
+      scheduleCanvasSync();
       video.play().catch(() => {});
     };
 
     if (video.readyState >= 1) {
-      syncCanvasSize();
+      scheduleCanvasSync();
       video.play().catch(() => {});
+    }
+
+    this.windowResizeHandler = scheduleCanvasSync;
+    window.addEventListener('resize', this.windowResizeHandler);
+
+    this.videoResizeHandler = scheduleCanvasSync;
+    video.addEventListener('resize', this.videoResizeHandler);
+
+    if (container && typeof ResizeObserver === 'function') {
+      this.resizeObserver = new ResizeObserver(() => {
+        scheduleCanvasSync();
+      });
+      this.resizeObserver.observe(container);
     }
 
     stream.getVideoTracks().forEach((track) => {
@@ -92,7 +159,33 @@ class SessionCamera {
     });
   }
 
+  teardownCanvasSync() {
+    if (this.syncFrameId !== null) {
+      window.cancelAnimationFrame(this.syncFrameId);
+      this.syncFrameId = null;
+    }
+
+    if (this.resizeObserver) {
+      this.resizeObserver.disconnect();
+      this.resizeObserver = null;
+    }
+
+    if (this.windowResizeHandler) {
+      window.removeEventListener('resize', this.windowResizeHandler);
+      this.windowResizeHandler = null;
+    }
+
+    if (this.videoElement && this.videoResizeHandler) {
+      this.videoElement.removeEventListener('resize', this.videoResizeHandler);
+      this.videoResizeHandler = null;
+    }
+
+    this.syncCanvasSize = null;
+  }
+
   destroy() {
+    this.teardownCanvasSync();
+
     if (this.currentStream) {
       this.currentStream.getTracks().forEach((t) => t.stop());
       this.currentStream = null;
@@ -100,6 +193,12 @@ class SessionCamera {
     if (this.videoElement) {
       this.videoElement.srcObject = null;
       this.videoElement.onloadedmetadata = null;
+    }
+    if (this.canvasElement) {
+      this.canvasElement.style.left = '';
+      this.canvasElement.style.top = '';
+      this.canvasElement.style.width = '';
+      this.canvasElement.style.height = '';
     }
   }
 }

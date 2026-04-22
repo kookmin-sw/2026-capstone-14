@@ -526,11 +526,19 @@ class RepCounter {
     };
   }
 
+  normalizeMetricStatValue(value) {
+    if (typeof value === 'boolean') {
+      return value ? 1 : 0;
+    }
+    return Number.isFinite(value) ? value : null;
+  }
+
   updateMetricStats(stats, value) {
-    if (!stats || !Number.isFinite(value)) return;
-    stats.min = stats.min == null ? value : Math.min(stats.min, value);
-    stats.max = stats.max == null ? value : Math.max(stats.max, value);
-    stats.sum += value;
+    const normalizedValue = this.normalizeMetricStatValue(value);
+    if (!stats || normalizedValue == null) return;
+    stats.min = stats.min == null ? normalizedValue : Math.min(stats.min, normalizedValue);
+    stats.max = stats.max == null ? normalizedValue : Math.max(stats.max, normalizedValue);
+    stats.sum += normalizedValue;
     stats.count++;
   }
 
@@ -572,8 +580,8 @@ class RepCounter {
 
   getConfidenceFactor(score) {
     if (score >= 0.8) return 1;
-    if (score >= 0.6) return 0.85;
-    return 0.7;
+    if (score >= 0.6) return 0.8;
+    return 0.5;
   }
 
   updateTimeBased(angles, currentScore = 0) {

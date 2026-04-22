@@ -246,16 +246,25 @@ class ScoringEngine {
       },
 
       // 정렬 관련
-      'knee_alignment': () => angles.kneeAlignment?.isAligned ? 100 : 50,
+      'knee_alignment': () => {
+        if (!angles.kneeAlignment) return null;
+        if (!Number.isFinite(angles.kneeAlignment.left) || !Number.isFinite(angles.kneeAlignment.right)) {
+          return null;
+        }
+        return angles.kneeAlignment.isAligned ? 100 : 50;
+      },
       'heel_contact': () => {
         if (angles.heelContact != null) return angles.heelContact ? 100 : 0;
         if (Number.isFinite(angles.heelY) && Number.isFinite(angles.toeY)) {
-          return angles.heelY <= angles.toeY + 0.02 ? 100 : 0;
+          return angles.heelY >= angles.toeY - 0.02 ? 100 : 0;
         }
         return null;
       },
       'knee_over_toe': () => {
         if (!angles.kneeAlignment) return null;
+        if (!Number.isFinite(angles.kneeAlignment.left) || !Number.isFinite(angles.kneeAlignment.right)) {
+          return null;
+        }
         const avg = (Math.abs(angles.kneeAlignment.left || 0) +
           Math.abs(angles.kneeAlignment.right || 0)) / 2;
         return Math.max(0, 100 - avg * 500); // 정렬 점수로 변환
@@ -270,8 +279,7 @@ class ScoringEngine {
       },
       'knee_valgus': () => {
         if (angles.kneeValgus != null) return angles.kneeValgus;
-        if (!angles.kneeAlignment) return null;
-        return (Math.abs(angles.kneeAlignment.left || 0) + Math.abs(angles.kneeAlignment.right || 0)) / 2;
+        return null;
       },
 
       // 깊이/시간 관련
@@ -589,7 +597,7 @@ class ScoringEngine {
         default: '무릎이 발끝 방향을 향하도록 해주세요'
       },
       'knee_over_toe': {
-        default: '무릎이 발끝을 넘지 않도록 주의하세요'
+        default: '무릎과 발 방향이 어긋나지 않도록 맞춰주세요'
       },
       'trunk_tibia_angle': { low: '상체와 다리가 평행하도록 자세를 유지해주세요', high: '상체가 너무 누워있습니다' },
       'tibia_angle': { low: '무릎을 조금 더 굽혀주세요', high: '무릎이 너무 앞으로 나갔습니다' },
@@ -746,7 +754,14 @@ function evaluateQualityGate(inputs, context) {
       inputs.keyJointVisibilityAverage < QUALITY_GATE_THRESHOLDS.keyJointVisibilityAverage) {
     return { result: 'withhold', reason: 'joints_missing' };
   }
-  if ((context && context.allowedViews || []).length > 0) {
+
+  const selectedView = context?.selectedView || null;
+  if (selectedView && selectedView !== 'DIAGONAL') {
+    const matchesSelectedView = inputs.estimatedView === selectedView;
+    if (!matchesSelectedView || inputs.estimatedViewConfidence < QUALITY_GATE_THRESHOLDS.estimatedViewConfidence) {
+      return { result: 'withhold', reason: 'view_mismatch' };
+    }
+  } else if ((context?.allowedViews || []).length > 0) {
     const viewAllowed = context.allowedViews.includes(inputs.estimatedView);
     if (!viewAllowed || inputs.estimatedViewConfidence < QUALITY_GATE_THRESHOLDS.estimatedViewConfidence) {
       return { result: 'withhold', reason: 'view_mismatch' };

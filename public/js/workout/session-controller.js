@@ -886,12 +886,16 @@ async function initSession(workoutData) {
     poseEngine.start();
 
     const processFrame = async () => {
-      if (poseEngine && poseEngine.isRunning && !state.isPaused) {
-        await poseEngine.send(videoElement);
+      try {
+        if (poseEngine && poseEngine.isRunning && !state.isPaused) {
+          await poseEngine.send(videoElement);
 
-        if (poseEngine.lastResults) {
-          poseEngine.drawPose(poseCanvas, poseEngine.lastResults);
+          if (poseEngine.lastResults) {
+            poseEngine.drawPose(poseCanvas, poseEngine.lastResults);
+          }
         }
+      } catch (error) {
+        console.error('[Session] processFrame 예외:', error);
       }
 
       if (state.phase !== "FINISHED") {
@@ -915,6 +919,8 @@ async function initSession(workoutData) {
     const gateInputs = buildGateInputsFromPoseData(poseData, stabilityMetrics);
     const gateContext = {
       allowedViews: getAllowedViews(),
+      // selectedView is the user-chosen scoring camera angle for this session.
+      // The common quality gate must enforce it when present.
       selectedView: state.selectedView,
     };
     const gateResult = (typeof evaluateQualityGate !== 'undefined')
@@ -1304,9 +1310,7 @@ async function initSession(workoutData) {
   function checkFeedback(scoreResult) {
     if (state.alertCooldown) return;
 
-    const lowScoreItem = scoreResult.breakdown?.find(
-      (item) => item.feedback && item.score < item.maxScore * 0.6,
-    );
+    const lowScoreItem = selectAlertFeedbackItem(scoreResult);
 
     if (lowScoreItem) {
       showAlert("자세 교정 필요", lowScoreItem.feedback);
@@ -1320,6 +1324,42 @@ async function initSession(workoutData) {
         });
       }
     }
+  }
+
+  function selectAlertFeedbackItem(scoreResult) {
+    if (!scoreResult?.breakdown?.length) {
+      return null;
+    }
+
+    const isTimeBased = Boolean(repCounter?.pattern?.isTimeBased);
+    const candidates = scoreResult.breakdown
+      .filter((item) => item?.feedback)
+      .map((item) => {
+        const bufferedScores = !isTimeBased
+          ? state.repMetricBuffer?.[item.key]?.scores
+          : null;
+        const bufferedCount = Array.isArray(bufferedScores) ? bufferedScores.length : 0;
+        const normalizedScore = bufferedCount > 0
+          ? aggregateScores(bufferedScores)
+          : getNormalizedMetricScore(item);
+        const requiredSamples = item.key === "heel_contact" ? 4 : 2;
+        return {
+          ...item,
+          score: normalizedScore,
+          maxScore: 100,
+          normalizedScore,
+          bufferedCount,
+          requiredSamples,
+        };
+      })
+      .filter((item) => {
+        if (item.normalizedScore >= 60) return false;
+        if (isTimeBased) return true;
+        return item.bufferedCount >= item.requiredSamples;
+      })
+      .sort((a, b) => a.normalizedScore - b.normalizedScore);
+
+    return candidates[0] || null;
   }
 
   function showRepFeedback(repRecord) {
@@ -2081,7 +2121,7 @@ function buildGateInputsFromPoseData(poseData, stabilityMetrics) {
   const rawInputs = {
     frameInclusionRatio: quality.inFrameRatio ?? 1.0,
     keyJointVisibilityAverage: quality.avgVisibility ?? 0,
-    minKeyJointVisibility: quality.visibleRatio ?? 0,
+    minKeyJointVisibility: quality.minVisibility ?? 0,
     estimatedView: view,
     estimatedViewConfidence: quality.viewStability ?? 0,
     detectionConfidence: quality.avgVisibility ?? 0,

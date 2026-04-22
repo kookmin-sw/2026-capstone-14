@@ -236,6 +236,48 @@ test('evaluateQualityGate returns pass when all seed thresholds are met', () => 
   assert.equal(result.reason, null);
 });
 
+test('evaluateQualityGate prioritizes selectedView over broad allowedViews', () => {
+  const result = evaluateQualityGate({
+    frameInclusionRatio: 0.95,
+    keyJointVisibilityAverage: 0.80,
+    minKeyJointVisibility: 0.71,
+    estimatedView: 'SIDE',
+    estimatedViewConfidence: 0.80,
+    detectionConfidence: 0.92,
+    trackingConfidence: 0.93,
+    stableFrameCount: QUALITY_GATE_THRESHOLDS.stableFrameCount,
+    unstableFrameRatio: 0.10,
+    cameraDistanceOk: true,
+  }, {
+    allowedViews: ['FRONT', 'SIDE', 'DIAGONAL'],
+    selectedView: 'FRONT',
+  });
+
+  assert.equal(result.result, 'withhold');
+  assert.equal(result.reason, 'view_mismatch');
+});
+
+test('evaluateQualityGate uses allowedViews fallback when selectedView is DIAGONAL', () => {
+  const result = evaluateQualityGate({
+    frameInclusionRatio: 0.95,
+    keyJointVisibilityAverage: 0.80,
+    minKeyJointVisibility: 0.71,
+    estimatedView: 'SIDE',
+    estimatedViewConfidence: 0.80,
+    detectionConfidence: 0.92,
+    trackingConfidence: 0.93,
+    stableFrameCount: QUALITY_GATE_THRESHOLDS.stableFrameCount,
+    unstableFrameRatio: 0.10,
+    cameraDistanceOk: true,
+  }, {
+    allowedViews: ['FRONT', 'SIDE', 'DIAGONAL'],
+    selectedView: 'DIAGONAL',
+  });
+
+  assert.equal(result.result, 'pass');
+  assert.equal(result.reason, null);
+});
+
 test('evaluateQualityGate passes without context (no allowedViews)', () => {
   const result = evaluateQualityGate({
     frameInclusionRatio: 0.95,

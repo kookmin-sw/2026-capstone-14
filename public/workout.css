@@ -175,10 +175,7 @@
 
 .camera-frame canvas {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
+  /* 크기와 위치는 JavaScript (session-camera.js) 가 동기화함 */
 }
 
 .camera-frame[data-preview-mirrored="true"] video,
@@ -278,10 +275,7 @@
 /* 세션: 포즈 캔버스 오버레이 (비디오 위) */
 #poseCanvas {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
+  /* 크기와 위치는 JavaScript (session-camera.js) 가 동기화함 */
   pointer-events: none;
 }
 

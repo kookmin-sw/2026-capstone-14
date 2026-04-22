@@ -34,12 +34,11 @@
           weight: 0.35,
           max_score: 35,
           rule: {
-            ideal_min: 85,
+            ideal_min: 90,
             ideal_max: 100,
-            acceptable_min: 60,
+            acceptable_min: 50,
             acceptable_max: 100,
-            feedback_low: '더 깊이 앉아주세요',
-            feedback_high: '너무 깊습니다'
+            feedback_low: '더 깊이 앉아주세요'
           },
           metric: {
             metric_id: 'squat_depth',
@@ -133,24 +132,6 @@
           max_score: 10,
           rule: {
             ideal_min: 0,
-            ideal_max: 10,
-            acceptable_min: 0,
-            acceptable_max: 20,
-            feedback_low: '요추를 중립으로 유지해주세요',
-            feedback_high: '엉덩이가 뒤로 말리고 있습니다'
-          },
-          metric: {
-            metric_id: 'squat_lumbar_neutral',
-            key: 'lumbar_angle',
-            title: '요추 중립 유지',
-            unit: 'DEG'
-          }
-        },
-        {
-          weight: 0.20,
-          max_score: 20,
-          rule: {
-            ideal_min: 0,
             ideal_max: 0.03,
             acceptable_min: 0,
             acceptable_max: 0.08,
@@ -193,57 +174,6 @@
         minDuration: 800,
         minActiveTime: 200
       };
-    },
-
-    getFrameGate(angles, runtime) {
-      const quality = angles?.quality || {};
-      const view = angles?.view || 'UNKNOWN';
-      const selectedView = runtime?.selectedView || runtime?.state?.selectedView || null;
-      const trackedJointRatio = quality.trackedJointRatio ?? 0;
-      const inFrameRatio = quality.inFrameRatio ?? 0;
-      const score = quality.score ?? 0;
-
-      if (trackedJointRatio < 0.75) {
-        return {
-          isReady: false,
-          reason: 'tracked_joints_low',
-          message: '무릎과 발목까지 전신이 충분히 보이도록 카메라를 맞춰주세요'
-        };
-      }
-
-      if (inFrameRatio < 0.75) {
-        return {
-          isReady: false,
-          reason: 'out_of_frame',
-          message: '발과 하체가 잘리지 않도록 카메라를 조금 더 멀리 두세요'
-        };
-      }
-
-      if (view === 'UNKNOWN') {
-        return {
-          isReady: false,
-          reason: 'view_unknown',
-          message: '정면 또는 측면이 잘 보이도록 몸 방향을 맞춰주세요'
-        };
-      }
-
-      if (selectedView && selectedView !== 'DIAGONAL' && view !== selectedView) {
-        return {
-          isReady: false,
-          reason: 'view_mismatch',
-          message: `선택한 ${selectedView} 자세에 맞게 몸 방향을 조정해주세요`
-        };
-      }
-
-      if (score < 0.5) {
-        return {
-          isReady: false,
-          reason: 'quality_low',
-          message: '카메라 위치와 조명을 조정한 뒤 다시 자세를 잡아주세요'
-        };
-      }
-
-      return { isReady: true };
     },
 
     startRepTracking(repCounter, now) {
@@ -331,16 +261,15 @@
       const lockoutKnee = scoringEngine.pickMetric(summary, ['LOCKOUT', 'ASCENT'], 'kneeAngle', 'max');
 
       const maxTrunkTibia = scoringEngine.pickMetric(summary, ['DESCENT', 'BOTTOM', 'ASCENT'], 'trunkTibiaAngle', 'max');
-      const minHeelContact = scoringEngine.pickMetric(summary, ['DESCENT', 'BOTTOM', 'ASCENT'], 'heelContact', 'min');
-      const maxLumbar = scoringEngine.pickMetric(summary, ['BOTTOM'], 'lumbarAngle', 'max');
+      const avgHeelContact = scoringEngine.pickMetric(summary, ['DESCENT', 'BOTTOM', 'ASCENT'], 'heelContact', 'avg');
       const bottomHipBelowKnee = scoringEngine.pickMetric(summary, ['BOTTOM'], 'hipBelowKnee', 'min');
       const avgKneeValgus = scoringEngine.pickMetric(summary, ['BOTTOM', 'ASCENT', 'DESCENT'], 'kneeValgus', 'avg');
 
+      const depthReachedByAngle = Number.isFinite(bottomKnee) && bottomKnee <= 130;
+      const depthReachedByHip = bottomHipBelowKnee === 1;
+
       const hardFails = [];
-      if (!summary.flags?.bottomReached || bottomKnee == null || bottomKnee > 125) {
-        hardFails.push('depth_not_reached');
-      }
-      if (bottomHipBelowKnee === false) {
+      if (!depthReachedByAngle && !depthReachedByHip) {
         hardFails.push('depth_not_reached');
       }
       if (!summary.flags?.lockoutReached || (lockoutKnee != null && lockoutKnee < 150)) {
@@ -355,8 +284,7 @@
         bottomHip,
         maxSpine,
         maxTrunkTibia,
-        minHeelContact,
-        maxLumbar,
+        avgHeelContact,
         bottomHipBelowKnee,
         avgKneeValgus,
         kneeSymmetry,
@@ -416,8 +344,7 @@
         bottomHip,
         maxSpine,
         maxTrunkTibia,
-        minHeelContact,
-        maxLumbar,
+        avgHeelContact,
         avgKneeValgus
       });
 
@@ -510,14 +437,14 @@
     const movingDown = delta <= -1.5;
     const movingUp = delta >= 1.5;
 
-    if (repCounter.currentState === window.REP_STATES?.NEUTRAL) {
+    if (repCounter.currentState === 'NEUTRAL') {
       return (repCounter.bottomReached || repCounter.ascentStarted) ? REP_PHASES.LOCKOUT : REP_PHASES.NEUTRAL;
     }
 
     if (!repCounter.bottomReached) {
       if (nearBottom) {
         repCounter.bottomStableFrames = Math.abs(delta) <= 2 ? repCounter.bottomStableFrames + 1 : 1;
-        if (repCounter.bottomStableFrames >= 2 || (!movingDown && repCounter.currentState === window.REP_STATES?.ACTIVE)) {
+        if (repCounter.bottomStableFrames >= 2 || (!movingDown && repCounter.currentState === 'ACTIVE')) {
           repCounter.bottomReached = true;
           return REP_PHASES.BOTTOM;
         }
@@ -529,7 +456,7 @@
     }
 
     if (!repCounter.ascentStarted) {
-      if (movingUp || repCounter.currentState !== window.REP_STATES?.ACTIVE) {
+      if (movingUp || repCounter.currentState !== 'ACTIVE') {
         repCounter.ascentStarted = true;
         return nearLockout ? REP_PHASES.LOCKOUT : REP_PHASES.ASCENT;
       }
@@ -537,7 +464,7 @@
       return REP_PHASES.BOTTOM;
     }
 
-    if (nearLockout && repCounter.currentState === window.REP_STATES?.NEUTRAL) {
+    if (nearLockout && repCounter.currentState === 'NEUTRAL') {
       return REP_PHASES.LOCKOUT;
     }
 
@@ -605,7 +532,6 @@
         tibiaAngle: repCounter.createMetricStats(),
         trunkTibiaAngle: repCounter.createMetricStats(),
         heelContact: repCounter.createMetricStats(),
-        lumbarAngle: repCounter.createMetricStats(),
         hipBelowKnee: repCounter.createMetricStats(),
         kneeValgus: repCounter.createMetricStats()
       }
@@ -616,8 +542,11 @@
     const leftKnee = Number.isFinite(angles.leftKnee) ? angles.leftKnee : null;
     const rightKnee = Number.isFinite(angles.rightKnee) ? angles.rightKnee : null;
     const kneeSymmetry = leftKnee != null && rightKnee != null ? Math.abs(leftKnee - rightKnee) : null;
-    const kneeAlignment = angles.kneeAlignment
-      ? (Math.abs(angles.kneeAlignment.left || 0) + Math.abs(angles.kneeAlignment.right || 0)) / 2
+    const hasKneeTrackingProxy = angles.kneeAlignment &&
+      Number.isFinite(angles.kneeAlignment.left) &&
+      Number.isFinite(angles.kneeAlignment.right);
+    const kneeAlignment = hasKneeTrackingProxy
+      ? (Math.abs(angles.kneeAlignment.left) + Math.abs(angles.kneeAlignment.right)) / 2
       : null;
     const qualityScore = Number.isFinite(angles.quality?.score) ? angles.quality.score : null;
 
@@ -628,24 +557,22 @@
          ? Math.abs(angles.spine - angles.tibia)
          : null);
 
-    const heelContact = angles.heelContact != null
-      ? angles.heelContact
-      : (Number.isFinite(angles.heelY) && Number.isFinite(angles.toeY)
-         ? angles.heelY <= angles.toeY + 0.02
+      const heelContact = angles.heelContact != null
+        ? (angles.heelContact ? 1 : 0)
+        : (Number.isFinite(angles.heelY) && Number.isFinite(angles.toeY)
+         ? (angles.heelY >= angles.toeY - 0.02 ? 1 : 0)
          : null);
 
-    const lumbarAngle = repCounter.getAngleValue(angles, 'lumbar_angle');
-
-    const hipBelowKnee = angles.hipBelowKnee != null
-      ? angles.hipBelowKnee
-      : (Number.isFinite(angles.hipY) && Number.isFinite(angles.kneeY)
-         ? angles.hipY > angles.kneeY
+      const hipBelowKnee = angles.hipBelowKnee != null
+        ? (angles.hipBelowKnee ? 1 : 0)
+        : (Number.isFinite(angles.hipY) && Number.isFinite(angles.kneeY)
+         ? (angles.hipY > angles.kneeY ? 1 : 0)
          : null);
 
     const kneeValgus = angles.kneeValgus != null
       ? angles.kneeValgus
-      : (angles.kneeAlignment
-         ? (Math.abs(angles.kneeAlignment.left || 0) + Math.abs(angles.kneeAlignment.right || 0)) / 2
+      : (hasKneeTrackingProxy
+         ? (Math.abs(angles.kneeAlignment.left) + Math.abs(angles.kneeAlignment.right)) / 2
          : null);
 
     return {
@@ -660,7 +587,6 @@
       tibiaAngle,
       trunkTibiaAngle,
       heelContact,
-      lumbarAngle,
       hipBelowKnee,
       kneeValgus
     };
@@ -711,7 +637,6 @@
     repCounter.updateMetricStats(target.metrics.tibiaAngle, snapshot.tibiaAngle);
     repCounter.updateMetricStats(target.metrics.trunkTibiaAngle, snapshot.trunkTibiaAngle);
     repCounter.updateMetricStats(target.metrics.heelContact, snapshot.heelContact);
-    repCounter.updateMetricStats(target.metrics.lumbarAngle, snapshot.lumbarAngle);
     repCounter.updateMetricStats(target.metrics.hipBelowKnee, snapshot.hipBelowKnee);
     repCounter.updateMetricStats(target.metrics.kneeValgus, snapshot.kneeValgus);
   }
@@ -796,16 +721,9 @@
       heelContact: {
         key: 'heel_contact',
         title: '뒤꿈치 접지',
-        scorer: () => scoreHeelContact(values.minHeelContact),
-        rawValue: () => values.minHeelContact,
+        scorer: () => scoreHeelContact(values.avgHeelContact),
+        rawValue: () => values.avgHeelContact,
         feedback: '뒤꿈치가 떨어지지 않도록 유지해주세요'
-      },
-      buttWink: {
-        key: 'lumbar_angle',
-        title: '요추 중립 유지',
-        scorer: () => scoreButtWink(values.maxLumbar),
-        rawValue: () => values.maxLumbar,
-        feedback: '엉덩이가 뒤로 말리지 않도록 코어를 단단히 잡아주세요'
       },
       kneeValgus: {
         key: 'knee_valgus',
@@ -818,20 +736,18 @@
 
     const plans = {
       SIDE: [
-        { ...common.depth, weight: 0.25 },
-        { ...common.hip, weight: 0.20 },
-        { ...common.spine, weight: 0.15 },
-        { ...common.trunkTibia, weight: 0.15 },
-        { ...common.buttWink, weight: 0.10 },
+        { ...common.depth, weight: 0.30 },
+        { ...common.hip, weight: 0.22 },
+        { ...common.spine, weight: 0.18 },
+        { ...common.trunkTibia, weight: 0.18 },
         { ...common.heelContact, weight: 0.08 },
-        { ...common.alignment, weight: 0.07 }
+        { ...common.alignment, weight: 0.04 }
       ],
       FRONT: [
         { ...common.symmetry, weight: 0.30 },
-        { ...common.kneeValgus, weight: 0.25 },
-        { ...common.alignment, weight: 0.20 },
-        { ...common.depth, weight: 0.15 },
-        { ...common.spine, weight: 0.10 }
+        { ...common.kneeValgus, weight: 0.30 },
+        { ...common.depth, weight: 0.25 },
+        { ...common.spine, weight: 0.15 }
       ],
       UNKNOWN: [
         { ...common.depth, weight: 0.25 },
@@ -901,16 +817,11 @@
   }
 
   function scoreHeelContact(value) {
-    if (value === null || value === undefined) return null;
-    return value === true || value === 1 ? 100 : 0;
-  }
-
-  function scoreButtWink(value) {
     if (!Number.isFinite(value)) return null;
-    if (value <= 10) return 100;
-    if (value <= 18) return interpolate(value, 10, 18, 100, 70);
-    if (value <= 25) return interpolate(value, 18, 25, 70, 30);
-    if (value <= 35) return interpolate(value, 25, 35, 30, 5);
+    if (value >= 0.90) return 100;
+    if (value >= 0.80) return interpolate(value, 0.80, 0.90, 75, 100);
+    if (value >= 0.65) return interpolate(value, 0.65, 0.80, 45, 75);
+    if (value >= 0.50) return interpolate(value, 0.50, 0.65, 15, 45);
     return 0;
   }
 
@@ -929,7 +840,7 @@
     return outMin + ((outMax - outMin) * ratio);
   }
 
-  function pickFeedback({ hardFails, breakdown, view, confidence, bottomHip, maxSpine, maxTrunkTibia, minHeelContact, maxLumbar, avgKneeValgus }) {
+  function pickFeedback({ hardFails, breakdown, view, confidence, bottomHip, maxSpine, maxTrunkTibia, avgHeelContact, avgKneeValgus }) {
     if (hardFails.includes('low_confidence') || confidence.level === 'LOW') {
       return '카메라에 전신이 잘 보이도록 위치를 다시 맞춰주세요';
     }
@@ -954,17 +865,14 @@
     if (view === 'SIDE' && Number.isFinite(maxSpine) && maxSpine > 40) {
       return '가슴을 들고 상체를 더 안정적으로 유지해주세요';
     }
-    if (view === 'SIDE' && Number.isFinite(values.maxTrunkTibia) && values.maxTrunkTibia > 25) {
+    if (view === 'SIDE' && Number.isFinite(maxTrunkTibia) && maxTrunkTibia > 25) {
       return '상체와 다리가 평행하도록 자세를 유지해주세요';
     }
-    if (view === 'SIDE' && values.minHeelContact === false) {
+    if (view === 'SIDE' && Number.isFinite(avgHeelContact) && avgHeelContact < 0.7) {
       return '뒤꿈치가 떨어지지 않도록 유지해주세요';
     }
-    if (view === 'SIDE' && Number.isFinite(values.maxLumbar) && values.maxLumbar > 20) {
-      return '엉덩이가 뒤로 말리지 않도록 코어를 단단히 잡아주세요';
-    }
-    if (view === 'FRONT' && Number.isFinite(values.avgKneeValgus) && values.avgKneeValgus > 0.08) {
-      return '무릎이 안쪽으로 무너지지 않도록 바깥쪽 힘으로 밀어주세요';
+    if (view === 'FRONT' && Number.isFinite(avgKneeValgus) && avgKneeValgus > 0.08) {
+      return '무릎이 안쪽으로 물어지지 않도록 바깥쪽 힘으로 밀어주세요';
     }
 
     return '좋아요! 같은 흐름으로 반복해보세요';
@@ -989,6 +897,11 @@
     // 시점(View)에 따른 유효성 필터링: 화면 각도상 정확한 측정이 불가능한 항목 제외
     if (view === 'FRONT' && category === 'hip') return false;
     if (view === 'SIDE' && category === 'symmetry') return false;
+    if (view === 'FRONT' && metricKey === 'knee_alignment') return false;
+    if (metricKey === 'heel_contact') {
+      return view === 'SIDE' &&
+        (phase === REP_PHASES.BOTTOM || phase === REP_PHASES.ASCENT);
+    }
 
     // 상체는 모든 phase에서 평가
     if (category === 'torso') {

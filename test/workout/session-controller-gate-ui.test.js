@@ -97,6 +97,7 @@ function makePoseData(qualityLevel, viewStability, view = 'FRONT') {
         level: qualityLevel,
         viewStability: viewStability,
         avgVisibility: 0.8,
+        minVisibility: 0.75,
         visibleRatio: 0.75,
         inFrameRatio: 0.95,
       },

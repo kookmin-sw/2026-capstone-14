@@ -169,14 +169,18 @@ class PoseEngine {
     // - worldLandmarks가 없으면 기존 2D(이미지 평면) 각도로 fallback
     const angles = this.calculateAllAngles(landmarks, worldLandmarks);
 
-    // 콜백 호출
+    // 콜백 호출 — 예외를 격리하여 MediaPipe 프레임 루프가 중단되지 않도록 보호
     if (this.onPoseDetected) {
-      this.onPoseDetected({
-        landmarks,
-        worldLandmarks,
-        angles,
-        timestamp
-      });
+      try {
+        this.onPoseDetected({
+          landmarks,
+          worldLandmarks,
+          angles,
+          timestamp
+        });
+      } catch (error) {
+        console.error('[PoseEngine] onPoseDetected 콜백 예외:', error);
+      }
     }
   }
 
@@ -234,6 +238,8 @@ class PoseEngine {
     };
 
     const quality = this.getFrameQuality(landmarks, view);
+    const spine = this.getSpineAngle(landmarks, canUseWorld ? worldLandmarks : null);
+    const tibia = this.getTibiaAngle(landmarks, canUseWorld ? worldLandmarks : null);
 
     return {
       // 무릎 각도 (서있을 때 ~180도, 스쿼트 시 ~90도)
@@ -253,10 +259,23 @@ class PoseEngine {
       rightShoulder: angleFlexion(LANDMARKS.RIGHT_HIP, LANDMARKS.RIGHT_SHOULDER, LANDMARKS.RIGHT_ELBOW),
 
       // 척추 각도 (상체 기울기)
-      spine: this.getSpineAngle(landmarks, canUseWorld ? worldLandmarks : null),
+      spine,
 
-      // 무릎 정렬 (무릎이 발끝을 넘는지)
+      // 경골 기울기와 상체-경골 상대각 (스쿼트 측면 평가용)
+      tibia,
+      trunkTibiaAngle: Number.isFinite(spine) && Number.isFinite(tibia)
+        ? Math.abs(spine - tibia)
+        : null,
+
+      // 무릎 정렬 proxy (정면 기준으로 무릎이 발 라인을 따라가는지)
       kneeAlignment: this.getKneeAlignment(landmarks),
+
+      // 무릎 valgus (정면 뷰에서 무릎이 안쪽으로 굽는 정도)
+      kneeValgus: this.getKneeValgus(landmarks),
+
+      // 스쿼트 보조 signal
+      heelContact: this.getHeelContact(landmarks),
+      hipBelowKnee: this.getHipBelowKnee(landmarks),
 
       // 디버깅/품질 확인용
       view,
@@ -292,6 +311,9 @@ class PoseEngine {
     const avgVisibility = visibilities.length
       ? visibilities.reduce((sum, value) => sum + value, 0) / visibilities.length
       : 0;
+    const minVisibility = visibilities.length
+      ? Math.min(...visibilities)
+      : 0;
     const visibleRatio = keyIndices.length > 0
       ? visibilities.filter((value) => value >= 0.6).length / keyIndices.length
       : 0;
@@ -316,6 +338,7 @@ class PoseEngine {
       level: this.getQualityLevel(score),
       factor: this.getQualityFactor(score),
       avgVisibility: Math.round(avgVisibility * 100) / 100,
+      minVisibility: Math.round(minVisibility * 100) / 100,
       visibleRatio: Math.round(visibleRatio * 100) / 100,
       trackedJointRatio: Math.round(trackedJointRatio * 100) / 100,
       inFrameRatio: Math.round(inFrameRatio * 100) / 100,
@@ -488,17 +511,192 @@ class PoseEngine {
   }
 
   /**
-   * 무릎 정렬 체크 (무릎이 발끝보다 앞으로 나왔는지)
+   * 세그먼트의 수직 대비 기울기 계산
+   * - 0도: 수직에 가까움
+   * - 값이 커질수록 전/후방 기울기가 큼
+   */
+  getSegmentTiltAngle(startPoint, endPoint) {
+    if (
+      !startPoint || !endPoint ||
+      !Number.isFinite(startPoint.x) || !Number.isFinite(startPoint.y) ||
+      !Number.isFinite(endPoint.x) || !Number.isFinite(endPoint.y)
+    ) {
+      return null;
+    }
+
+    const dx = endPoint.x - startPoint.x;
+    const dy = endPoint.y - startPoint.y;
+    const angle = Math.abs(Math.atan2(dx, -dy) * 180 / Math.PI);
+    return Math.round(angle);
+  }
+
+  /**
+   * 세그먼트의 3D 수직 대비 기울기 계산
+   */
+  getSegmentTiltAngle3D(startPoint, endPoint) {
+    if (
+      !startPoint || !endPoint ||
+      !Number.isFinite(startPoint.x) || !Number.isFinite(startPoint.y) || !Number.isFinite(startPoint.z) ||
+      !Number.isFinite(endPoint.x) || !Number.isFinite(endPoint.y) || !Number.isFinite(endPoint.z)
+    ) {
+      return null;
+    }
+
+    const vx = endPoint.x - startPoint.x;
+    const vy = endPoint.y - startPoint.y;
+    const vz = endPoint.z - startPoint.z;
+
+    const horiz = Math.sqrt(vx * vx + vz * vz);
+    const vert = Math.abs(vy);
+    const angle = Math.atan2(horiz, vert) * 180 / Math.PI;
+    return Math.round(angle);
+  }
+
+  /**
+   * 경골 기울기 계산
+   */
+  getTibiaAngle(landmarks, worldLandmarks = null) {
+    const values = [];
+    const pushIfFinite = (value) => {
+      if (Number.isFinite(value)) values.push(value);
+    };
+
+    if (Array.isArray(worldLandmarks) && worldLandmarks.length >= 33) {
+      pushIfFinite(this.getSegmentTiltAngle3D(
+        worldLandmarks[LANDMARKS.LEFT_KNEE],
+        worldLandmarks[LANDMARKS.LEFT_ANKLE]
+      ));
+      pushIfFinite(this.getSegmentTiltAngle3D(
+        worldLandmarks[LANDMARKS.RIGHT_KNEE],
+        worldLandmarks[LANDMARKS.RIGHT_ANKLE]
+      ));
+    }
+
+    if (!values.length) {
+      pushIfFinite(this.getSegmentTiltAngle(
+        landmarks[LANDMARKS.LEFT_KNEE],
+        landmarks[LANDMARKS.LEFT_ANKLE]
+      ));
+      pushIfFinite(this.getSegmentTiltAngle(
+        landmarks[LANDMARKS.RIGHT_KNEE],
+        landmarks[LANDMARKS.RIGHT_ANKLE]
+      ));
+    }
+
+    if (!values.length) return null;
+    return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+  }
+
+  /**
+   * 무릎 정렬 proxy (정면 기준으로 무릎이 발 라인을 따라가는지)
    */
   getKneeAlignment(landmarks) {
-    const leftDiff = landmarks[LANDMARKS.LEFT_KNEE].x - landmarks[LANDMARKS.LEFT_ANKLE].x;
-    const rightDiff = landmarks[LANDMARKS.RIGHT_KNEE].x - landmarks[LANDMARKS.RIGHT_ANKLE].x;
+    const resolveFootLineX = (ankleIdx, footIdx) => {
+      const ankle = landmarks[ankleIdx];
+      const foot = landmarks[footIdx];
+      if (!ankle || !Number.isFinite(ankle.x)) return null;
+      if (!foot || !Number.isFinite(foot.x)) return ankle.x;
+      return (ankle.x + foot.x) / 2;
+    };
+
+    const leftKnee = landmarks[LANDMARKS.LEFT_KNEE];
+    const rightKnee = landmarks[LANDMARKS.RIGHT_KNEE];
+    const leftFootLineX = resolveFootLineX(LANDMARKS.LEFT_ANKLE, LANDMARKS.LEFT_FOOT_INDEX);
+    const rightFootLineX = resolveFootLineX(LANDMARKS.RIGHT_ANKLE, LANDMARKS.RIGHT_FOOT_INDEX);
+
+    const leftDiff = leftKnee && Number.isFinite(leftKnee.x) && Number.isFinite(leftFootLineX)
+      ? leftKnee.x - leftFootLineX
+      : null;
+    const rightDiff = rightKnee && Number.isFinite(rightKnee.x) && Number.isFinite(rightFootLineX)
+      ? rightKnee.x - rightFootLineX
+      : null;
+    const hasBothSides = Number.isFinite(leftDiff) && Number.isFinite(rightDiff);
 
     return {
       left: leftDiff,
       right: rightDiff,
-      isAligned: Math.abs(leftDiff) < 0.05 && Math.abs(rightDiff) < 0.05
+      isAligned: hasBothSides && Math.abs(leftDiff) < 0.05 && Math.abs(rightDiff) < 0.05
     };
+  }
+
+  /**
+   * 무릎 valgus 측정 (정면 뷰에서 무릎이 안쪽으로 굽는 정도)
+   * - 0: 중립, 값이 클수록 valgus 심함
+   */
+  getKneeValgus(landmarks) {
+    const lh = landmarks[LANDMARKS.LEFT_HIP];
+    const lk = landmarks[LANDMARKS.LEFT_KNEE];
+    const la = landmarks[LANDMARKS.LEFT_ANKLE];
+    const rh = landmarks[LANDMARKS.RIGHT_HIP];
+    const rk = landmarks[LANDMARKS.RIGHT_KNEE];
+    const ra = landmarks[LANDMARKS.RIGHT_ANKLE];
+
+    let leftValgus = 0;
+    let rightValgus = 0;
+
+    if (lh && lk && la && Number.isFinite(lh.x) && Number.isFinite(lk.x) && Number.isFinite(la.x)) {
+      const midX = (lh.x + la.x) / 2;
+      leftValgus = Math.abs(lk.x - midX);
+    }
+
+    if (rh && rk && ra && Number.isFinite(rh.x) && Number.isFinite(rk.x) && Number.isFinite(ra.x)) {
+      const midX = (rh.x + ra.x) / 2;
+      rightValgus = Math.abs(rk.x - midX);
+    }
+
+    return (leftValgus + rightValgus) / 2;
+  }
+
+  /**
+   * 뒤꿈치 접지 여부 추정
+   * - heel landmark가 foot index보다 눈에 띄게 위로 들리면 접지 이탈로 본다.
+   */
+  getHeelContact(landmarks) {
+    const footPairs = [
+      [LANDMARKS.LEFT_HEEL, LANDMARKS.LEFT_FOOT_INDEX],
+      [LANDMARKS.RIGHT_HEEL, LANDMARKS.RIGHT_FOOT_INDEX]
+    ];
+    const observed = [];
+
+    footPairs.forEach(([heelIdx, toeIdx]) => {
+      const heel = landmarks[heelIdx];
+      const toe = landmarks[toeIdx];
+      if (
+        !heel || !toe ||
+        !Number.isFinite(heel.y) || !Number.isFinite(toe.y) ||
+        (Number.isFinite(heel.visibility) && heel.visibility < 0.5) ||
+        (Number.isFinite(toe.visibility) && toe.visibility < 0.5)
+      ) {
+        return;
+      }
+
+      observed.push(heel.y >= toe.y - 0.02);
+    });
+
+    if (!observed.length) return null;
+    return observed.every(Boolean);
+  }
+
+  /**
+   * 엉덩이 중앙이 무릎 중앙보다 아래에 있는지 추정
+   */
+  getHipBelowKnee(landmarks) {
+    const leftHip = landmarks[LANDMARKS.LEFT_HIP];
+    const rightHip = landmarks[LANDMARKS.RIGHT_HIP];
+    const leftKnee = landmarks[LANDMARKS.LEFT_KNEE];
+    const rightKnee = landmarks[LANDMARKS.RIGHT_KNEE];
+
+    if (
+      !leftHip || !rightHip || !leftKnee || !rightKnee ||
+      !Number.isFinite(leftHip.y) || !Number.isFinite(rightHip.y) ||
+      !Number.isFinite(leftKnee.y) || !Number.isFinite(rightKnee.y)
+    ) {
+      return null;
+    }
+
+    const hipMidY = (leftHip.y + rightHip.y) / 2;
+    const kneeMidY = (leftKnee.y + rightKnee.y) / 2;
+    return hipMidY > (kneeMidY + 0.01);
   }
 
   /**
@@ -714,11 +912,45 @@ class PoseEngine {
 
     ctx.clearRect(0, 0, width, height);
 
+    // 어깨 랜드마크 시각적 보정 (실제 어깨 끝에 가깝게)
+    const adjustedLandmarks = this.adjustShoulderLandmarks(results.poseLandmarks);
+
     // 연결선 그리기
-    this.drawConnections(ctx, results.poseLandmarks, width, height);
+    this.drawConnections(ctx, adjustedLandmarks, width, height);
 
     // 랜드마크 점 그리기
-    this.drawLandmarks(ctx, results.poseLandmarks, width, height);
+    this.drawLandmarks(ctx, adjustedLandmarks, width, height);
+  }
+
+  /**
+   * 어깨 랜드마크 시각적 보정
+   * MediaPipe의 11/12번 랜드마크는 실제 어깨 관절보다 목 쪽에 위치하므로,
+   * 팔 방향으로 약간 이동시켜 실제 어깨에 가깝게 보정합니다.
+   * (각도 계산에는 영향을 주지 않음 — 시각화 전용)
+   */
+  adjustShoulderLandmarks(landmarks) {
+    const adjusted = landmarks.map(lm => ({ ...lm }));
+
+    const adjustShoulder = (shoulderIdx, elbowIdx) => {
+      const shoulder = adjusted[shoulderIdx];
+      const elbow = adjusted[elbowIdx];
+      if (!shoulder || !elbow || shoulder.visibility < 0.5 || elbow.visibility < 0.5) return;
+
+      const dx = elbow.x - shoulder.x;
+      const dy = elbow.y - shoulder.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist > 0) {
+        const offsetRatio = 0.12; // 팔 길이의 12%만큼 어깨를 팔 방향으로 이동
+        shoulder.x += (dx / dist) * dist * offsetRatio;
+        shoulder.y += (dy / dist) * dist * offsetRatio;
+      }
+    };
+
+    adjustShoulder(LANDMARKS.LEFT_SHOULDER, LANDMARKS.LEFT_ELBOW);
+    adjustShoulder(LANDMARKS.RIGHT_SHOULDER, LANDMARKS.RIGHT_ELBOW);
+
+    return adjusted;
   }
 
   /**
