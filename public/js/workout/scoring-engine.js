@@ -216,6 +216,14 @@ class ScoringEngine {
       'spine_angle': () => angles.spine,
       'torso_angle': () => angles.spine,
       'back_angle': () => angles.spine,
+      'trunk_tibia_angle': () => {
+        if (angles.trunkTibiaAngle != null) return angles.trunkTibiaAngle;
+        const spine = angles.spine;
+        const tibia = angles.tibia;
+        if (spine == null || tibia == null) return null;
+        return Math.abs(spine - tibia);
+      },
+      'tibia_angle': () => angles.tibia,
 
       // 대칭 관련 (좌우 차이값 반환)
       'knee_symmetry': () => {
@@ -239,11 +247,31 @@ class ScoringEngine {
 
       // 정렬 관련
       'knee_alignment': () => angles.kneeAlignment?.isAligned ? 100 : 50,
+      'heel_contact': () => {
+        if (angles.heelContact != null) return angles.heelContact ? 100 : 0;
+        if (Number.isFinite(angles.heelY) && Number.isFinite(angles.toeY)) {
+          return angles.heelY <= angles.toeY + 0.02 ? 100 : 0;
+        }
+        return null;
+      },
       'knee_over_toe': () => {
         if (!angles.kneeAlignment) return null;
         const avg = (Math.abs(angles.kneeAlignment.left || 0) +
           Math.abs(angles.kneeAlignment.right || 0)) / 2;
         return Math.max(0, 100 - avg * 500); // 정렬 점수로 변환
+      },
+      'lumbar_angle': () => angles.lumbarAngle ?? angles.lumbar ?? null,
+      'hip_below_knee': () => {
+        if (angles.hipBelowKnee != null) return angles.hipBelowKnee ? 100 : 0;
+        if (Number.isFinite(angles.hipY) && Number.isFinite(angles.kneeY)) {
+          return angles.hipY > angles.kneeY ? 100 : 0;
+        }
+        return null;
+      },
+      'knee_valgus': () => {
+        if (angles.kneeValgus != null) return angles.kneeValgus;
+        if (!angles.kneeAlignment) return null;
+        return (Math.abs(angles.kneeAlignment.left || 0) + Math.abs(angles.kneeAlignment.right || 0)) / 2;
       },
 
       // 깊이/시간 관련
@@ -562,7 +590,13 @@ class ScoringEngine {
       },
       'knee_over_toe': {
         default: '무릎이 발끝을 넘지 않도록 주의하세요'
-      }
+      },
+      'trunk_tibia_angle': { low: '상체와 다리가 평행하도록 자세를 유지해주세요', high: '상체가 너무 누워있습니다' },
+      'tibia_angle': { low: '무릎을 조금 더 굽혀주세요', high: '무릎이 너무 앞으로 나갔습니다' },
+      'heel_contact': { default: '뒤꿈치가 떨어지지 않도록 유지해주세요' },
+      'lumbar_angle': { low: '요추를 중립으로 유지해주세요', high: '엉덩이가 뒤로 말리고 있습니다' },
+      'hip_below_knee': { default: '엉덩이가 무릎보다 낮아지도록 더 깊이 앉아주세요' },
+      'knee_valgus': { low: '무릎이 안쪽으로 무너지지 않도록 바깥쪽 힘으로 밀어주세요', high: '무릎이 지나치게 바깥으로 벌어졌습니다' }
     };
 
     const template = feedbackTemplates[metricKey];
