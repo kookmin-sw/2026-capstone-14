@@ -220,13 +220,13 @@ routine_instance
 
 ```mermaid
 graph TD
-    Camera[Camera / Screen / Mobile Rear] --> PoseEngine
-    PoseEngine -- Angles/Landmarks --> RepCounter
-    PoseEngine -- Angles/Landmarks --> ScoringEngine
-    RepCounter -- Rep or Time Progress --> SessionController
-    ScoringEngine -- Live Score & Breakdown --> SessionController
-    SessionController -- Samples / Events --> SessionBuffer
-    SessionBuffer -- Export Payload --> Backend API
+    Camera["Camera / Screen / Mobile Rear"] --> PoseEngine
+    PoseEngine -- "Angles / Landmarks" --> RepCounter
+    PoseEngine -- "Angles / Landmarks" --> ScoringEngine
+    RepCounter -- "Rep or Time Progress" --> SessionController
+    ScoringEngine -- "Live Score & Breakdown" --> SessionController
+    SessionController -- "Samples / Events" --> SessionBuffer
+    SessionBuffer -- "Export Payload" --> BackendAPI["Backend API"]
 ```
 
 ### 4.3 주요 클라이언트 모듈
