@@ -1,10 +1,14 @@
 /**
- * 운동 세션용 미디어 스트림 (웹캠 / 화면 공유 / 휴대폰 카메라)
+ * session-camera.js
+ *
+ * 운동 세션용 미디어 스트림 관리 클래스.
+ * 웹캠, 화면 공유, 휴대폰 카메라(전면/후면) 스트림을 획득하고
+ * 비디오 요소에 바인딩하며, 캔버스 오버레이 크기를 동기화합니다.
  */
 class SessionCamera {
   /**
-   * @param {HTMLVideoElement} videoElement
-   * @param {HTMLCanvasElement} canvasElement
+   * @param {HTMLVideoElement} videoElement - 비디오 요소
+   * @param {HTMLCanvasElement} canvasElement - 랜드마크 오버레이 캔버스
    */
   constructor(videoElement, canvasElement) {
     this.videoElement = videoElement;
@@ -18,8 +22,11 @@ class SessionCamera {
   }
 
   /**
-   * @param {'webcam'|'screen'|'mobile_rear'|'mobile_front'} sourceType
-   * @returns {Promise<MediaStream>}
+   * 지정된 소스 타입의 미디어 스트림을 획득합니다.
+   * 해상도/facingMode 제약 조건을 단계적으로 완화하여 최대한 스트림을 확보합니다.
+   * 1차: 해상도 + facingMode → 2차: facingMode만 → 3차: 제약 없음
+   * @param {'webcam'|'screen'|'mobile_rear'|'mobile_front'} sourceType - 미디어 소스 타입
+   * @returns {Promise<MediaStream>} 미디어 스트림
    */
   async getStream(sourceType) {
     if (sourceType === 'screen') {
@@ -60,7 +67,12 @@ class SessionCamera {
   }
 
   /**
-   * @param {MediaStream} stream
+   * 스트림을 비디오 요소에 적용하고 캔버스 오버레이 크기를 동기화합니다.
+   * - 비디오 srcObject에 스트림 연결
+   * - 캔버스 크기를 원본 비디오 해상도로 설정 (MediaPipe 랜드마크 좌표 비율 맞춤)
+   * - CSS로 캔버스 표시 위치/크기를 비디오 object-fit 영역과 일치시킴
+   * - 윈도우 리사이즈, 비디오 리사이즈, ResizeObserver로 캔버스 크기 자동 조정
+   * @param {MediaStream} stream - 적용할 미디어 스트림
    */
   applyStream(stream) {
     this.destroy();
@@ -159,6 +171,7 @@ class SessionCamera {
     });
   }
 
+  /** 캔버스 크기 동기화 관련 이벤트 리스너와 애니메이션 프레임을 정리합니다. */
   teardownCanvasSync() {
     if (this.syncFrameId !== null) {
       window.cancelAnimationFrame(this.syncFrameId);
@@ -183,6 +196,13 @@ class SessionCamera {
     this.syncCanvasSize = null;
   }
 
+  /**
+   * 모든 리소스를 해제합니다.
+   * - 캔버스 동기화 정리
+   * - 미디어 스트림 트랙 중지
+   * - 비디오 srcObject 제거
+   * - 캔버스 CSS 초기화
+   */
   destroy() {
     this.teardownCanvasSync();
 

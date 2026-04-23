@@ -1,3 +1,16 @@
+/**
+ * session-ui.js
+ *
+ * 운동 세션 UI 업데이트를 담당하는 팩토리 모듈.
+ * DOM 요소 참조(refs)를 받아 UI 조작 메서드를 제공하는 객체를 생성합니다.
+ * session-controller.js에서 인스턴스화하여 사용합니다.
+ *
+ * @param {Object} deps
+ * @param {Object} deps.refs - DOM 요소 참조 객체
+ * @param {Function} deps.createElement - document.createElement 바인딩
+ * @param {Function} deps.formatClock - 초를 MM:SS로 포맷하는 함수
+ * @returns {Object} UI 조작 메서드들
+ */
 function createSessionUi({
   refs,
   createElement = typeof document !== 'undefined'
@@ -7,12 +20,22 @@ function createSessionUi({
 }) {
   void formatClock;
 
+  /**
+   * 상태 뱃지(PREPARING/WORKING 등)의 클래스와 텍스트를 업데이트합니다.
+   * @param {string} className - CSS 클래스명 (running, paused 등)
+   * @param {string} text - 표시 텍스트
+   */
   function updateStatus(className, text) {
     if (!refs.statusBadge) return;
     refs.statusBadge.className = `status ${className}`;
     refs.statusBadge.textContent = text;
   }
 
+  /**
+   * 알림(alert)을 표시합니다.
+   * @param {string} title - 알림 제목
+   * @param {string} message - 알림 내용
+   */
   function showAlert(title, message) {
     if (!refs.alertContainer || !refs.alertTitle || !refs.alertMessage) return;
     refs.alertTitle.textContent = title;
@@ -20,12 +43,18 @@ function createSessionUi({
     refs.alertContainer.hidden = false;
   }
 
+  /** 알림(alert)을 숨깁니다. */
   function hideAlert() {
     if (refs.alertContainer) {
       refs.alertContainer.hidden = true;
     }
   }
 
+  /**
+   * 토스트 메시지를 화면 하단에 일시적으로 표시합니다 (2초 후 자동 제거).
+   * @param {string} message - 토스트 메시지
+   * @returns {HTMLElement|null} 생성된 토스트 요소
+   */
   function showToast(message) {
     if (typeof createElement !== 'function') return null;
 
@@ -41,6 +70,12 @@ function createSessionUi({
     return toast;
   }
 
+  /**
+   * 루틴 프로그레스 UI를 최초 구성합니다.
+   * 각 운동 단계(step)를 칩(chip) 형태로 DOM에 동적 생성합니다.
+   * @param {Object} params
+   * @param {Array} params.steps - [{ exerciseName, targetSummary }]
+   */
   function setupRoutineProgressUi({ steps = [] }) {
     if (!refs.routineProgressEl || !refs.routineStepEl || typeof createElement !== 'function') {
       return;
@@ -111,6 +146,16 @@ function createSessionUi({
     card.replaceChildren(header, progressTrack, meta, refs.routineStepListEl);
   }
 
+  /**
+   * 메인 카운터 UI를 업데이트합니다.
+   * 시간 기반 운동이면 초(sec), 횟수 기반이면 rep 수를 표시합니다.
+   * @param {Object} params
+   * @param {boolean} params.isTimeBased - 현재 운동이 시간 기반인지
+   * @param {boolean} params.isRoutineTimeTarget - 루틴 목표가 시간 기반인지
+   * @param {number} params.currentSegmentSec - 현재 세그먼트 시간
+   * @param {number} params.currentSetWorkSec - 현재 세트 작업 시간
+   * @param {number} params.currentRep - 현재 반복 횟수
+   */
   function updatePrimaryCounterDisplay({
     isTimeBased,
     isRoutineTimeTarget,
@@ -134,6 +179,16 @@ function createSessionUi({
     }
   }
 
+  /**
+   * 루틴 단계 프로그레스 표시를 업데이트합니다.
+   * 현재 단계/전체 단계 수, 진행률 퍼센트, 완료 칩 하이라이트 등을 반영합니다.
+   * @param {Object} params
+   * @param {number} params.stepIndex - 현재 단계 인덱스
+   * @param {number} params.totalSteps - 총 단계 수
+   * @param {number} params.progressPercent - 진행률(%)
+   * @param {string} params.currentExerciseName - 현재 운동 이름
+   * @param {string} params.targetSummary - 목표 요약 텍스트
+   */
   function updateRoutineStepDisplay({
     stepIndex,
     totalSteps,
@@ -177,6 +232,19 @@ function createSessionUi({
     }
   }
 
+  /**
+   * 점수 UI를 업데이트합니다.
+   * 점수 값, 색상, breakdown(메트릭별 점수 최대 3개)을 표시합니다.
+   * gated 상태이면 품질 게이트 보류 메시지를 표시합니다.
+   * @param {Object} params
+   * @param {number} params.score - 점수
+   * @param {string} params.displayText - 표시 텍스트 (기본: score 문자열)
+   * @param {Array} params.breakdown - 메트릭별 점수 배열 [{ title, key, score, normalizedScore }]
+   * @param {boolean} params.gated - 품질 게이트 보류 중인지
+   * @param {string} params.message - 게이트 보류 메시지
+   * @param {string} params.emptyMessage - breakdown이 없을 때 표시할 메시지
+   * @param {string} params.color - 점수 색상
+   */
   function updateScoreDisplay({
     score,
     displayText = score > 0 ? String(score) : '--',
@@ -217,6 +285,18 @@ function createSessionUi({
       .join('');
   }
 
+  /**
+   * 플랭크 목표 시간 선택 UI를 동기화합니다.
+   * - 루틴 모드: 자동 적용 (버튼/입력 비활성화)
+   * - 자유 모드: 수동 선택 가능 (PREPARING 상태에서만)
+   * @param {Object} params
+   * @param {boolean} params.isPlank - 플랭크 운동인지
+   * @param {boolean} params.isRoutinePlank - 루틴 모드 플랭크인지
+   * @param {boolean} params.showFreeTargetUi - 자유 모드 목표 선택 UI 표시 여부
+   * @param {number} params.targetSec - 목표 시간(초)
+   * @param {boolean} params.canStart - 시작 가능 여부
+   * @param {string} params.phase - 현재 페이즈
+   */
   function syncPlankTargetUi({
     isPlank,
     isRoutinePlank,
@@ -263,6 +343,18 @@ function createSessionUi({
     }
   }
 
+  /**
+   * 플랭크 런타임 표시를 업데이트합니다.
+   * 현재 유지 시간, 최고 유지 시간, 진행률, phase 라벨 등을 반영합니다.
+   * @param {Object} params
+   * @param {number} params.bestHoldSec - 최고 유지 시간(초)
+   * @param {number} params.currentSegmentSec - 현재 세그먼트 시간(초)
+   * @param {boolean} params.goalReached - 목표 달성 여부
+   * @param {boolean} params.isPlank - 플랭크 운동인지
+   * @param {string} params.phase - 현재 phase (SETUP/HOLD/BREAK)
+   * @param {number} params.progressPercent - 진행률(%)
+   * @param {number} params.targetSec - 목표 시간(초)
+   */
   function updatePlankRuntimeDisplay({
     bestHoldSec,
     currentSegmentSec,

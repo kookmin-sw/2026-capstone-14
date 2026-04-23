@@ -42,34 +42,43 @@ class SessionBuffer {
     console.log('[SessionBuffer] 초기화:', sessionId);
   }
 
+  /** 뷰 코드 정규화 (FRONT/SIDE/DIAGONAL만 허용) */
   normalizeViewCode(view) {
     const normalized = (view || '').toString().trim().toUpperCase();
     return ['FRONT', 'SIDE', 'DIAGONAL'].includes(normalized) ? normalized : null;
   }
 
+  /** 결과 기준 정규화 (REPS/DURATION만 허용) */
   normalizeResultBasis(resultBasis) {
     const normalized = (resultBasis || '').toString().trim().toUpperCase();
     return ['REPS', 'DURATION'].includes(normalized) ? normalized : null;
   }
 
+  /** 양의 정수 정규화 (유효하지 않으면 null) */
   normalizePositiveInt(value) {
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || parsed <= 0) return null;
     return Math.round(parsed);
   }
 
+  /** 0 이상의 정수 정규화 (유효하지 않으면 null) */
   normalizeNonNegativeInt(value) {
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || parsed < 0) return null;
     return Math.round(parsed);
   }
 
+  /** 메트릭 점수를 0~100 범위로 클램핑 */
   clampMetricScore(value) {
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) return null;
     return Math.max(0, Math.min(100, parsed));
   }
 
+  /**
+   * 메트릭 항목의 점수를 0~100 정규화 점수로 변환.
+   * normalizedScore가 있으면 사용, 없으면 score/maxScore 비율로 계산.
+   */
   getNormalizedMetricScore(item) {
     const explicit = item?.normalizedScore ?? item?.normalized_score;
     const explicitScore = this.clampMetricScore(explicit);
@@ -351,6 +360,12 @@ class SessionBuffer {
     return results;
   }
 
+  /**
+   * 메트릭 항목을 대상 누적기에 추가합니다.
+   * 정규화 점수, 원본 값(rawValue), 피드백 발생 횟수를 누적합니다.
+   * @param {Object} target - 누적 대상 객체 (metricAccumulators 또는 repMetricAccumulators)
+   * @param {Object} item - 메트릭 항목
+   */
   accumulateMetric(target, item) {
     const key = item?.key;
     if (!key) return;
@@ -406,6 +421,13 @@ class SessionBuffer {
     };
   }
 
+  /**
+   * 시간 기반 운동의 타임 스코어를 계산합니다.
+   * 최고 유지 시간을 목표 시간으로 나누어 0~100 점수로 변환합니다.
+   * @param {number} bestHoldSec - 최고 유지 시간(초)
+   * @param {number} targetSec - 목표 시간(초)
+   * @returns {number} 타임 스코어 (0~100)
+   */
   calculateTimeScore(bestHoldSec, targetSec) {
     const best = this.normalizePositiveInt(bestHoldSec) || 0;
     const target = this.normalizePositiveInt(targetSec) || 0;
@@ -413,6 +435,11 @@ class SessionBuffer {
     return Math.max(0, Math.min(100, Math.round((best / target) * 100)));
   }
 
+  /**
+   * 인터임 breakdown 배열을 서버 저장 형식으로 정규화합니다.
+   * @param {Array} breakdown - 메트릭 breakdown 배열
+   * @returns {Array} 정규화된 메트릭 결과 배열
+   */
   normalizeInterimBreakdown(breakdown) {
     if (!Array.isArray(breakdown) || breakdown.length === 0) return [];
 
@@ -439,6 +466,11 @@ class SessionBuffer {
       .filter(Boolean);
   }
 
+  /**
+   * scoreTimeline의 각 항목을 인터임 스냅샷으로 변환합니다.
+   * 서버의 session_snapshot_metric(INTERIM) 저장용.
+   * @returns {Array} [{ timestamp_ms, score, breakdown }]
+   */
   generateInterimSnapshots() {
     return this.scoreTimeline.map((item) => ({
       timestamp_ms: item.timestamp,
