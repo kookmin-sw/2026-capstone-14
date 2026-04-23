@@ -9,8 +9,8 @@
  *   6. finishWorkout(): 세션 종료 + SessionBuffer.export() → 서버 저장
  *
  * @param {object} workoutData 서버에서 주입된 세션 데이터
- *   - exercise: 운�� 메타데이터 (code, name, allowed_views, default_view 등)
- *   - scoringProfile: DB 채점 프로필 (없으면 운�� 모듈 fallback 사용)
+ *   - exercise: 운동 메타데이터 (code, name, allowed_views, default_view 등)
+ *   - scoringProfile: DB 채점 프로필 (없으면 운동 모듈 fallback 사용)
  *   - mode: 'FREE' | 'ROUTINE' | 'LEARN'
  *   - routine: 루틴 정보 (ROUTINE 모드일 때만)
  */
