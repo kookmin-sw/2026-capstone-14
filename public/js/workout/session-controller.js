@@ -26,6 +26,20 @@ function loadSessionUiFactory() {
 
 const sessionUiFactory = loadSessionUiFactory();
 
+function loadSessionVoiceFactory() {
+  if (typeof module !== 'undefined' && typeof require === 'function') {
+    return require('./session-voice.js').createSessionVoice;
+  }
+
+  if (typeof window !== 'undefined') {
+    return window.createSessionVoice || null;
+  }
+
+  return null;
+}
+
+const sessionVoiceFactory = loadSessionVoiceFactory();
+
 function loadRoutineSessionManagerFactory() {
   if (typeof module !== 'undefined' && typeof require === 'function') {
     return require('./routine-session-manager.js').createRoutineSessionManager;
@@ -190,6 +204,9 @@ const plankTimerPanelEl = document.getElementById("plankTimerPanel");
   const onboardingPrevBtn = document.getElementById("onboardingPrevBtn");
   const onboardingNextBtn = document.getElementById("onboardingNextBtn");
   const onboardingCloseBtn = document.getElementById("onboardingCloseBtn");
+  const voiceFeedbackToggle = document.getElementById("voiceFeedbackToggle");
+  const voiceFeedbackStatus = document.getElementById("voiceFeedbackStatus");
+  const voiceFeedbackHint = document.getElementById("voiceFeedbackHint");
   let routineProgressCountEl = null;
   let routineProgressPercentEl = null;
   let routineCurrentExerciseEl = null;
@@ -227,6 +244,9 @@ const plankTimerPanelEl = document.getElementById("plankTimerPanel");
     startBtn,
     statusBadge,
     timerLabelEl,
+    voiceFeedbackHint,
+    voiceFeedbackStatus,
+    voiceFeedbackToggle,
   };
 
   // ── 유틸리티 함수들 ──
@@ -263,7 +283,112 @@ const ui = sessionUiFactory({
     startRest,
     finishWorkout,
   });
+  const voice = typeof sessionVoiceFactory === 'function'
+    ? sessionVoiceFactory({
+        enabled: true,
+        storage: typeof window !== 'undefined' ? window.localStorage : null,
+      })
+    : null;
   const isTimeBasedExercise = () => Boolean(repCounter?.pattern?.isTimeBased);
+
+  function getFeedbackTimestamp() {
+    return sessionBuffer?.startTime
+      ? Date.now() - sessionBuffer.startTime
+      : 0;
+  }
+
+  function buildDeliveryResult(visual, voiceResult) {
+    return {
+      visual: visual === true,
+      voice: voiceResult?.spoken === true,
+    };
+  }
+
+  function createFeedbackEvent({
+    type,
+    message,
+    metric = null,
+    repRecord = null,
+    severity = 'info',
+    source = 'session',
+    withholdReason = null,
+  }) {
+    const normalizedMessage = (message || '').toString().trim();
+    const event = {
+      type,
+      timestamp: getFeedbackTimestamp(),
+      message: normalizedMessage,
+      exercise_code: getCurrentExerciseCode(),
+      severity,
+      source,
+      selected_view: state.selectedView,
+    };
+
+    if (metric) {
+      event.metric_key = metric.key || metric.metric_key || null;
+      event.metric_name = metric.title || metric.metric_name || null;
+      event.score = Number.isFinite(Number(metric.score)) ? Number(metric.score) : null;
+      event.max_score = Number.isFinite(Number(metric.maxScore))
+        ? Number(metric.maxScore)
+        : 100;
+      event.normalized_score = Number.isFinite(Number(metric.normalizedScore))
+        ? Number(metric.normalizedScore)
+        : getNormalizedMetricScore(metric);
+    }
+
+    if (repRecord) {
+      event.rep_number = repRecord.repNumber || repRecord.rep_number || null;
+      event.score = Number.isFinite(Number(repRecord.score))
+        ? Number(repRecord.score)
+        : event.score;
+    }
+
+    if (state.currentSet) {
+      event.set_number = state.currentSet;
+    }
+
+    if (withholdReason) {
+      event.withhold_reason = withholdReason;
+    }
+
+    return event;
+  }
+
+  function shouldSpeakFeedbackEvent(event) {
+    if (!event?.message) return false;
+    if (event.type === 'QUALITY_GATE_WITHHOLD') {
+      return ['out_of_frame', 'view_mismatch', 'no_person'].includes(event.withhold_reason);
+    }
+    return true;
+  }
+
+  function deliverFeedbackEvent(event, options = {}) {
+    if (!event?.message) return;
+
+    const visual = options.visual !== false;
+    if (visual) {
+      if (options.alertTitle) {
+        showAlert(options.alertTitle, event.message);
+      } else if (options.toast) {
+        ui.showToast(event.message);
+      }
+    }
+
+    const voiceResult = shouldSpeakFeedbackEvent(event)
+      ? voice?.speak(event.message, event)
+      : { spoken: false, reason: 'policy' };
+
+    const eventWithDelivery = {
+      ...event,
+      delivery: buildDeliveryResult(visual, voiceResult),
+    };
+
+    if (sessionBuffer?.recordEvent) {
+      sessionBuffer.recordEvent(eventWithDelivery);
+    } else if (sessionBuffer?.addEvent) {
+      sessionBuffer.addEvent(eventWithDelivery.type, eventWithDelivery);
+    }
+  }
 
   /** 플랭크 목표 시간을 UI 입력에서 읽기 (최소 10초) */
   const readTargetSecFromInput = () => {
@@ -1153,16 +1278,18 @@ function showModelLoadingOverlay() {
         gated: true,
         message: mapGateWithholdReasonToMessage(suppression.reason),
       });
-      showAlert(
-        "자세 인식 대기",
-        mapGateWithholdReasonToMessage(suppression.reason),
-      );
-      if (sessionBuffer) {
-        sessionBuffer.addEvent("QUALITY_GATE_WITHHOLD", {
-          reason: suppression.reason,
-          stableFrameCount: stabilityMetrics.stableFrameCount,
-        });
-      }
+      const message = mapGateWithholdReasonToMessage(suppression.reason);
+      const event = createFeedbackEvent({
+        type: "QUALITY_GATE_WITHHOLD",
+        message,
+        severity: "warning",
+        source: "quality_gate",
+        withholdReason: suppression.reason,
+      });
+      event.stable_frame_count = stabilityMetrics.stableFrameCount;
+      deliverFeedbackEvent(event, {
+        alertTitle: "자세 인식 대기",
+      });
       return;
     }
 
@@ -1576,16 +1703,17 @@ function showModelLoadingOverlay() {
     const lowScoreItem = selectAlertFeedbackItem(scoreResult);
 
     if (lowScoreItem) {
-      showAlert("자세 교정 필요", lowScoreItem.feedback);
+      const event = createFeedbackEvent({
+        type: "LOW_SCORE_HINT",
+        message: lowScoreItem.feedback,
+        metric: lowScoreItem,
+        severity: "warning",
+        source: "live_feedback",
+      });
 
-      if (sessionBuffer) {
-        sessionBuffer.addEvent("LOW_SCORE_HINT", {
-          metric_key: lowScoreItem.key,
-          score: lowScoreItem.score,
-          maxScore: lowScoreItem.maxScore,
-          feedback: lowScoreItem.feedback,
-        });
-      }
+      deliverFeedbackEvent(event, {
+        alertTitle: "자세 교정 필요",
+      });
     }
   }
 
@@ -1644,7 +1772,17 @@ function showModelLoadingOverlay() {
           ? "좋아요! 👍"
           : "계속 해보세요!");
 
-    ui.showToast(`${repRecord.repNumber}회 ${msg}`);
+    const event = createFeedbackEvent({
+      type: "REP_COMPLETE_FEEDBACK",
+      message: `${repRecord.repNumber}회 ${msg}`,
+      repRecord,
+      severity: repRecord.score >= 80 ? "success" : "info",
+      source: "rep_complete",
+    });
+
+    deliverFeedbackEvent(event, {
+      toast: true,
+    });
   }
 
   /** RepCounter 런타임 상태 리셋 + 목표 시간 재주입 */
@@ -2262,6 +2400,24 @@ function showModelLoadingOverlay() {
     controller.open();
   }
 
+  function syncVoiceFeedbackToggle() {
+    ui.updateVoiceFeedbackToggle?.({
+      enabled: voice?.isEnabled ? voice.isEnabled() : false,
+      supported: voice?.isSupported ? voice.isSupported() : false,
+    });
+  }
+
+  function setupVoiceFeedbackToggle() {
+    syncVoiceFeedbackToggle();
+    if (!voiceFeedbackToggle || !voice?.setEnabled) return;
+
+    voiceFeedbackToggle.addEventListener("click", () => {
+      const nextEnabled = !voice.isEnabled();
+      voice.setEnabled(nextEnabled);
+      syncVoiceFeedbackToggle();
+    });
+  }
+
   initWorkoutOnboarding();
 
   window.startWorkout = startWorkout;
@@ -2289,6 +2445,7 @@ function showModelLoadingOverlay() {
   updatePlankRuntimeDisplay(
     repCounter?.getTimeSummary ? repCounter.getTimeSummary() : null,
   );
+  setupVoiceFeedbackToggle();
   await connectCameraSource(selectedCameraSource);
 }
 
