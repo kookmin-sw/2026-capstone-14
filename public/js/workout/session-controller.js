@@ -286,7 +286,6 @@ const ui = sessionUiFactory({
 
   /** 운동 시작 가능 여부 — 플랭크는 목표 시간이 설정되어야 시작 가능 */
   const canStartCurrentExercise = () => {
-    if (!aiReady) return false;
     if (!isPlankExerciseCode()) return true;
     if (workoutData.mode === "ROUTINE") return getCurrentTargetSec() > 0;
     return getCurrentTargetSec() >= 10;
@@ -684,15 +683,15 @@ const ui = sessionUiFactory({
   async function connectCameraSource(sourceType) {
     applyPreviewOrientation(sourceType);
     cameraOverlay.innerHTML = `
-      <div style="display:flex; flex-direction:column; align-items:center; gap:12px;">
-        <style>@keyframes spin-anim { 100% { transform: rotate(360deg); } }</style>
-        <div style="width:36px; height:36px; border:4px solid rgba(255,255,255,0.2); border-top-color:#fff; border-radius:50%; animation:spin-anim 1s linear infinite;"></div>
-        <p style="margin:0; font-weight:500;">카메라를 연결 중...</p>
+      <div class="camera-loading-overlay" aria-live="polite">
+        <div class="camera-loading-spinner" aria-hidden="true"></div>
+        <p class="camera-loading-title">카메라를 연결 중...</p>
+        <p class="camera-loading-subtitle">브라우저 권한과 입력 소스를 확인하고 있습니다.</p>
       </div>
     `;
     cameraOverlay.hidden = false;
     startBtn.disabled = true;
-    startBtn.textContent = "모델 준비 중...";
+    startBtn.textContent = "카메라 연결 중...";
     aiReady = false;
 
     try {
@@ -706,10 +705,10 @@ const ui = sessionUiFactory({
           videoElement.addEventListener("loadeddata", resolve, { once: true });
       });
 
-      cameraOverlay.hidden = true;
-
-      warmUpGeneration++;
-      prepareAI(warmUpGeneration);
+      cameraOverlay.hidden = false;
+      cameraOverlay.innerHTML = cameraReadyHtml;
+      startBtn.disabled = !canStartCurrentExercise();
+      startBtn.textContent = originalStartBtnText;
     } catch (error) {
       console.error("[Session] 카메라 에러:", error);
 
@@ -748,24 +747,23 @@ const ui = sessionUiFactory({
       }
       const ok = await aiInitPromise;
       aiInitPromise = null;
-      if (generation !== warmUpGeneration) return;
+      if (generation !== warmUpGeneration) return false;
       if (!ok) {
         cameraOverlay.hidden = false;
         cameraOverlay.innerHTML =
           '<p>AI 엔진 로딩 실패</p><p class="muted">페이지를 새로고침해주세요</p>';
         startBtn.textContent = originalStartBtnText;
-        return;
+        return false;
       }
       aiEnginesInitialized = true;
     }
 
-    if (generation !== warmUpGeneration) return;
+    if (generation !== warmUpGeneration) return false;
 
     aiReady = true;
     startBtn.disabled = !canStartCurrentExercise();
     startBtn.textContent = originalStartBtnText;
-    cameraOverlay.innerHTML = cameraReadyHtml;
-    cameraOverlay.hidden = false;
+    return true;
   }
 
   /**
@@ -896,6 +894,19 @@ const ui = sessionUiFactory({
    * 4. 타이머 시작, Wake Lock 획득
    * 5. 루틴 모드면 첫 단계 UI 표시
    */
+function showModelLoadingOverlay() {
+    state.phase = "PREPARING";
+    ui.updateStatus("preparing", "모델 로딩 중");
+    cameraOverlay.hidden = false;
+    cameraOverlay.innerHTML = `
+      <div class="camera-loading-overlay" aria-live="polite">
+        <div class="camera-loading-spinner" aria-hidden="true"></div>
+        <p class="camera-loading-title">모델 로딩 중...</p>
+        <p class="camera-loading-subtitle">잠시 후 카운트다운이 시작됩니다.</p>
+      </div>
+    `;
+  }
+
   async function runStartCountdown() {
     state.phase = 'COUNTDOWN';
     ui.updateStatus('preparing', '시작 준비');
@@ -944,21 +955,32 @@ const ui = sessionUiFactory({
       state.selectedView = resolveDefaultView();
     }
 
-    if (!aiReady) {
-      alert("AI 모델이 아직 준비 중입니다. 잠시 후 다시 시도해주세요.");
+    if (!canStartCurrentExercise()) {
+      alert("목표 시간을 먼저 설정해주세요.");
       cameraOverlay.hidden = prevOverlayHidden;
       cameraOverlay.innerHTML = prevOverlayHtml || cameraReadyHtml;
       startBtn.hidden = prevStartHidden;
       startBtn.disabled = prevStartDisabled;
+      startBtn.textContent = prevStartText;
       return;
     }
 
-    if (!canStartCurrentExercise()) {
-      alert("목표 시간을 먼저 설정해주세요.");
-      return;
-    }
+    const sourceSelectEl = document.getElementById("sourceSelect");
+    const setupPanelContainer = document.getElementById("setupPanelContainer");
+    const prevSourceSelectHidden = sourceSelectEl?.hidden || false;
+    const prevViewSelectHidden = viewSelectRoot?.hidden || false;
+    const prevPlankTargetHidden = plankTargetSelectRoot?.hidden || false;
+    const hadSetupPanelHiddenClass =
+      setupPanelContainer?.classList.contains("hidden-during-workout") || false;
 
     try {
+      showModelLoadingOverlay();
+      warmUpGeneration++;
+      const aiPrepared = aiReady || (await prepareAI(warmUpGeneration));
+      if (!aiPrepared) {
+        throw new Error("AI 모델 로딩에 실패했습니다.");
+      }
+
       const response = await fetch("/api/workout/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1003,14 +1025,10 @@ const ui = sessionUiFactory({
 
       cameraOverlay.hidden = true;
       startBtn.hidden = true;
-      const sourceSelectEl = document.getElementById("sourceSelect");
       if (sourceSelectEl) sourceSelectEl.hidden = true;
       if (viewSelectRoot) viewSelectRoot.hidden = true;
       if (plankTargetSelectRoot) plankTargetSelectRoot.hidden = true;
 
-      const setupPanelContainer = document.getElementById(
-        "setupPanelContainer",
-      );
       if (setupPanelContainer)
         setupPanelContainer.classList.add("hidden-during-workout");
 
@@ -1033,6 +1051,12 @@ const ui = sessionUiFactory({
       startBtn.hidden = prevStartHidden;
       startBtn.disabled = prevStartDisabled;
       startBtn.textContent = prevStartText;
+      if (sourceSelectEl) sourceSelectEl.hidden = prevSourceSelectHidden;
+      if (viewSelectRoot) viewSelectRoot.hidden = prevViewSelectHidden;
+      if (plankTargetSelectRoot) plankTargetSelectRoot.hidden = prevPlankTargetHidden;
+      if (setupPanelContainer && !hadSetupPanelHiddenClass) {
+        setupPanelContainer.classList.remove("hidden-during-workout");
+      }
       alert("운동 시작에 실패했습니다: " + error.message);
     }
   }

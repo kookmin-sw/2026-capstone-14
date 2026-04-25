@@ -201,6 +201,43 @@
   font-size: 14px;
 }
 
+.camera-loading-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.camera-loading-spinner {
+  width: 36px;
+  height: 36px;
+  border: 4px solid rgba(255, 255, 255, 0.22);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: cameraLoadingSpin 0.9s linear infinite;
+}
+
+.camera-loading-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--workout-text);
+}
+
+.camera-loading-subtitle {
+  margin: 0;
+  font-size: 14px;
+  color: var(--workout-muted);
+}
+
+@keyframes cameraLoadingSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .camera-overlay[hidden] {
   display: none;
 }
