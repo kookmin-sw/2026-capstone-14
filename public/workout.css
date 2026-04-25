@@ -421,6 +421,27 @@
   .workout-onboarding-header h3 {
     font-size: 20px;
   }
+
+/* 운동 시작 5초 카운트다운 overlay */
+.start-countdown-overlay {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.start-countdown-number {
+  font-size: clamp(56px, 10vw, 96px);
+  font-weight: 900;
+  line-height: 1;
+  color: var(--workout-text);
+}
+
+.start-countdown-hint {
+  margin: 0;
+  font-size: 16px;
+  color: var(--workout-muted);
+}
 }
 
 /* 세션: 포즈 캔버스 오버레이 (비디오 위) */
