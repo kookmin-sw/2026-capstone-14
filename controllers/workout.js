@@ -677,6 +677,67 @@ const cleanupStaleOpenSessions = async (userId) => {
     }
 };
 
+const toEventText = (value, maxLength = 500) => {
+    if (value == null) return null;
+    const normalized = String(value).trim();
+    return normalized ? normalized.slice(0, maxLength) : null;
+};
+
+const toEventNumber = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+};
+
+const toEventBoolean = (value) => value === true;
+
+const normalizeEventDelivery = (delivery) => {
+    if (!delivery || typeof delivery !== 'object') return null;
+    return {
+        visual: toEventBoolean(delivery.visual),
+        voice: toEventBoolean(delivery.voice)
+    };
+};
+
+const buildSafeEventPayload = (event) => {
+    const source = event?.payload && typeof event.payload === 'object'
+        ? { ...event, ...event.payload }
+        : event;
+    const payload = {};
+
+    const textFields = [
+        'message',
+        'exercise_code',
+        'metric_key',
+        'metric_name',
+        'severity',
+        'source',
+        'withhold_reason',
+        'selected_view',
+        'quality_level'
+    ];
+    textFields.forEach((field) => {
+        const normalized = toEventText(source?.[field]);
+        if (normalized != null) payload[field] = normalized;
+    });
+
+    const numberFields = [
+        'score',
+        'max_score',
+        'normalized_score',
+        'rep_number',
+        'set_number'
+    ];
+    numberFields.forEach((field) => {
+        const normalized = toEventNumber(source?.[field]);
+        if (normalized != null) payload[field] = normalized;
+    });
+
+    const delivery = normalizeEventDelivery(source?.delivery);
+    if (delivery) payload.delivery = delivery;
+
+    return Object.keys(payload).length > 0 ? payload : null;
+};
+
 const normalizeEvents = (events, sessionId, startedAtIso) => {
     if (!Array.isArray(events) || events.length === 0) return [];
 
@@ -694,11 +755,18 @@ const normalizeEvents = (events, sessionId, startedAtIso) => {
                 ? new Date(sessionStartMs + Math.round(timestampMs)).toISOString()
                 : nowIso;
 
-            return {
+            const payload = buildSafeEventPayload(event);
+            const row = {
                 session_id: sessionId,
                 type: type.slice(0, 50),
                 event_time: eventTime
             };
+
+            if (payload) {
+                row.payload = payload;
+            }
+
+            return row;
         })
         .filter(Boolean);
 };
@@ -2162,5 +2230,8 @@ module.exports = {
     recordWorkoutSet,
     recordSessionEvent,
     getWorkoutResult,
-    getExercises
+    getExercises,
+    __test: {
+        normalizeEvents
+    }
 };
