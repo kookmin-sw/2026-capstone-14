@@ -115,6 +115,7 @@ test('browser script loading does not throw when helper scripts load first', () 
     'quality-gate-session.js',
     'session-ui.js',
     'routine-session-manager.js',
+    'onboarding-guide.js',
     'session-controller.js',
   ];
 

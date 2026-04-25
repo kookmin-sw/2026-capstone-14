@@ -40,6 +40,20 @@ function loadRoutineSessionManagerFactory() {
 
 const routineSessionManagerFactory = loadRoutineSessionManagerFactory();
 
+function loadWorkoutOnboardingGuide() {
+  if (typeof module !== 'undefined' && typeof require === 'function') {
+    return require('./onboarding-guide.js');
+  }
+
+  if (typeof window !== 'undefined') {
+    return window.WorkoutOnboardingGuide || null;
+  }
+
+  return null;
+}
+
+const workoutOnboardingGuide = loadWorkoutOnboardingGuide();
+
 if (!sessionQualityGateHelpers) {
   throw new Error('SessionQualityGate helpers are unavailable.');
 }
@@ -167,6 +181,15 @@ async function initSession(workoutData) {
   const plankGoalLabelEl = document.getElementById("plankGoalLabel");
   const plankSegmentLabelEl = document.getElementById("plankSegmentLabel");
 const plankTimerPanelEl = document.getElementById("plankTimerPanel");
+  const onboardingModal = document.getElementById("workoutOnboardingModal");
+  const onboardingTitleEl = document.getElementById("onboardingSlideTitle");
+  const onboardingProgressEl = document.getElementById("onboardingProgress");
+  const onboardingImageEl = document.getElementById("onboardingImage");
+  const onboardingImagePlaceholderEl = document.getElementById("onboardingImagePlaceholder");
+  const onboardingBulletsEl = document.getElementById("onboardingSlideBullets");
+  const onboardingPrevBtn = document.getElementById("onboardingPrevBtn");
+  const onboardingNextBtn = document.getElementById("onboardingNextBtn");
+  const onboardingCloseBtn = document.getElementById("onboardingCloseBtn");
   let routineProgressCountEl = null;
   let routineProgressPercentEl = null;
   let routineCurrentExerciseEl = null;
@@ -873,6 +896,40 @@ const ui = sessionUiFactory({
    * 4. 타이머 시작, Wake Lock 획득
    * 5. 루틴 모드면 첫 단계 UI 표시
    */
+  async function runStartCountdown() {
+    state.phase = 'COUNTDOWN';
+    ui.updateStatus('preparing', '시작 준비');
+
+    const steps = [
+      { num: '5', hint: '카메라 위치를 확인하세요' },
+      { num: '4', hint: '전신이 화면에 들어오게 서세요' },
+      { num: '3', hint: '좋은 자세를 준비하세요' },
+      { num: '2', hint: '호흡을 가다듬으세요' },
+      { num: '1', hint: '곧 시작합니다' },
+      { num: '시작!', hint: '운동 시작!' },
+    ];
+
+    cameraOverlay.hidden = false;
+    cameraOverlay.innerHTML = `
+      <div class="start-countdown-overlay" aria-live="polite">
+        <span class="start-countdown-number" id="countdownNumber"></span>
+        <p class="start-countdown-hint" id="countdownHint"></p>
+      </div>
+    `;
+
+    const numEl = document.getElementById('countdownNumber');
+    const hintEl = document.getElementById('countdownHint');
+
+    for (const step of steps) {
+      if (numEl) numEl.textContent = step.num;
+      if (hintEl) hintEl.textContent = step.hint;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+
+    cameraOverlay.hidden = true;
+    cameraOverlay.innerHTML = '';
+  }
+
   async function startWorkout() {
     const prevOverlayHtml = cameraOverlay.innerHTML;
     const prevOverlayHidden = cameraOverlay.hidden;
@@ -930,7 +987,6 @@ const ui = sessionUiFactory({
       if (data.routineInstance) {
         workoutData.routineInstance = data.routineInstance;
       }
-      state.phase = "WORKING";
       syncPlankTargetUi();
       updatePrimaryCounterDisplay();
       updateRoutineStepDisplay();
@@ -946,7 +1002,6 @@ const ui = sessionUiFactory({
       });
       state.currentTargetSec = getCurrentTargetSec();
 
-      ui.updateStatus("running", "운동 중");
       cameraOverlay.hidden = true;
       startBtn.hidden = true;
       const sourceSelectEl = document.getElementById("sourceSelect");
@@ -959,6 +1014,11 @@ const ui = sessionUiFactory({
       );
       if (setupPanelContainer)
         setupPanelContainer.classList.add("hidden-during-workout");
+
+      await runStartCountdown();
+
+      state.phase = "WORKING";
+      ui.updateStatus("running", "운동 중");
 
       pauseBtn.disabled = false;
       finishBtn.disabled = false;
@@ -1848,7 +1908,6 @@ const ui = sessionUiFactory({
       if (sessionBuffer) sessionBuffer.addEvent("PAUSE");
       releaseWakeLock();
     } else {
-      state.phase = "WORKING";
       ui.updateStatus("running", "운동 중");
       pauseBtn.innerHTML = "일시정지";
       if (poseEngine) poseEngine.start();
@@ -1887,7 +1946,6 @@ const ui = sessionUiFactory({
   function endRest() {
     clearInterval(state.restInterval);
     restTimerEl.hidden = true;
-    state.phase = "WORKING";
     timerLabelEl.textContent = "운동 시간";
     ui.updateStatus("running", "운동 중");
     syncPlankTargetUi();
@@ -2152,6 +2210,35 @@ const ui = sessionUiFactory({
 
   // ── 전역 노출: EJS 템플릿에서 onclick="startWorkout()" 등으로 호출 ──
   window.confirmExit = confirmExit;
+  function initWorkoutOnboarding() {
+    if (workoutData.mode === 'ROUTINE') return;
+    if (!workoutOnboardingGuide?.createWorkoutOnboardingController) return;
+    if (!onboardingModal) return;
+
+    const slides = workoutOnboardingGuide.getWorkoutOnboardingSlides({
+      exerciseCode: workoutData.exercise?.code,
+    });
+
+    const controller = workoutOnboardingGuide.createWorkoutOnboardingController({
+      refs: {
+        modal: onboardingModal,
+        titleEl: onboardingTitleEl,
+        progressEl: onboardingProgressEl,
+        imageEl: onboardingImageEl,
+        imagePlaceholderEl: onboardingImagePlaceholderEl,
+        bulletsEl: onboardingBulletsEl,
+        prevBtn: onboardingPrevBtn,
+        nextBtn: onboardingNextBtn,
+        closeBtn: onboardingCloseBtn,
+      },
+      slides,
+    });
+
+    controller.open();
+  }
+
+  initWorkoutOnboarding();
+
   window.startWorkout = startWorkout;
   window.togglePause = togglePause;
   window.finishWorkout = finishWorkout;
