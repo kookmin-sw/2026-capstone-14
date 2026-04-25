@@ -906,7 +906,6 @@ const ui = sessionUiFactory({
       { num: '3', hint: '좋은 자세를 준비하세요' },
       { num: '2', hint: '호흡을 가다듬으세요' },
       { num: '1', hint: '곧 시작합니다' },
-      { num: '시작!', hint: '운동 시작!' },
     ];
 
     cameraOverlay.hidden = false;
@@ -1908,6 +1907,7 @@ const ui = sessionUiFactory({
       if (sessionBuffer) sessionBuffer.addEvent("PAUSE");
       releaseWakeLock();
     } else {
+      state.phase = "WORKING";
       ui.updateStatus("running", "운동 중");
       pauseBtn.innerHTML = "일시정지";
       if (poseEngine) poseEngine.start();
@@ -1947,6 +1947,7 @@ const ui = sessionUiFactory({
     clearInterval(state.restInterval);
     restTimerEl.hidden = true;
     timerLabelEl.textContent = "운동 시간";
+    state.phase = "WORKING";
     ui.updateStatus("running", "운동 중");
     syncPlankTargetUi();
 
