@@ -61,6 +61,7 @@
   <script src="/js/workout/quality-gate-session.js"></script>
   <script src="/js/workout/session-ui.js"></script>
   <script src="/js/workout/routine-session-manager.js"></script>
+  <script src="/js/workout/onboarding-guide.js"></script>
   <script src="/js/workout/session-controller.js"></script>
 
   <div class="workout-container">
@@ -284,6 +285,65 @@
       </aside>
     </div>
   </div>
+
+  <% if (!isRoutineMode) { %>
+    <div
+      class="workout-onboarding-modal"
+      id="workoutOnboardingModal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="onboardingSlideTitle"
+      hidden
+    >
+      <div class="workout-onboarding-backdrop" data-onboarding-close="true"></div>
+      <section class="workout-onboarding-card" aria-label="운동 시작 가이드">
+        <header class="workout-onboarding-header">
+          <div>
+            <span class="workout-onboarding-eyebrow">운동 시작 가이드</span>
+            <h3 id="onboardingSlideTitle">카메라 세팅법</h3>
+          </div>
+          <button
+            type="button"
+            class="icon workout-onboarding-close"
+            id="onboardingCloseBtn"
+            aria-label="온보딩 닫기"
+          >×</button>
+        </header>
+
+        <div class="workout-onboarding-progress" id="onboardingProgress">1 / 4</div>
+
+        <div class="workout-onboarding-image-shell">
+          <img
+            class="workout-onboarding-image"
+            id="onboardingImage"
+            alt="운동 가이드 이미지"
+            hidden
+          />
+          <div class="workout-onboarding-image-placeholder" id="onboardingImagePlaceholder">
+            <strong>가이드 이미지 준비 중</strong>
+            <span>이미지가 추가되면 이 영역에 표시됩니다.</span>
+          </div>
+        </div>
+
+        <ul class="workout-onboarding-bullets" id="onboardingSlideBullets"></ul>
+
+        <footer class="workout-onboarding-actions">
+          <button
+            type="button"
+            class="ghost workout-onboarding-arrow"
+            id="onboardingPrevBtn"
+            aria-label="이전 안내"
+          >‹</button>
+          <button
+            type="button"
+            class="primary workout-onboarding-next"
+            id="onboardingNextBtn"
+            aria-label="다음 안내"
+          >›</button>
+        </footer>
+      </section>
+    </div>
+  <% } %>
 
   <!-- 종료 확인 모달 -->
   <div class="modal" id="exitModal" hidden>
