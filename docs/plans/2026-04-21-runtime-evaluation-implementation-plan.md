@@ -1,51 +1,51 @@
-# Runtime Evaluation Reliability Implementation Plan
+# 런타임 평가 신뢰성 구현 계획
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **에이전틱 작업자용:** 필수 하위 스킬: superpowers:subagent-driven-development (권장) 또는 superpowers:executing-plans를 사용하여 이 계획을 작업 단위로 구현할 것. 단계는 체크박스(`- [ ]`) 문법으로 추적.
 
-**Goal:** Add runtime-first quality gating, exercise-specific fail separation, and export-based validation so low-quality pose input is withheld instead of mis-scored.
+**목표:** 런타임 우선 품질 게이팅, 운동별 실패 분리, 익스포트 기반 검증을 추가하여 저품질 포즈 입력이 잘못 채점되지 않고 보류되도록 한다.
 
-**Architecture:** Keep the existing runtime pipeline, but standardize quality-gate inputs in `pose-engine.js`, evaluate pass/withhold in `scoring-engine.js`, surface guidance in `session-controller.js`, refine exercise-specific failure logic in the squat/push-up modules, and persist MVP verification data in `session-buffer.js`. Prefer pure helper functions with CommonJS export guards for Node testability rather than introducing new runtime layers or DB changes.
+**아키텍처:** 기존 런타임 파이프라인은 유지하되, `pose-engine.js`에서 품질 게이트 입력을 표준화하고, `scoring-engine.js`에서 pass/withhold를 평가하며, `session-controller.js`에서 안내를 표시하고, 스쿼트/푸쉬업 모듈에서 운동별 실패 로직을 정제하며, `session-buffer.js`에 MVP 검증 데이터를 보존한다. 새로운 런타임 레이어나 DB 변경을 도입하지 않고 Node 테스트 가능성을 위해 CommonJS 익스포트 가드를 가진 순수 헬퍼 함수를 선호한다.
 
-**Tech Stack:** Browser JavaScript, Node `--test`, CommonJS test exports, localStorage-backed session buffering
+**기술 스택:** 브라우저 JavaScript, Node `--test`, CommonJS 테스트 익스포트, localStorage 기반 세션 버퍼링
 
 ---
 
-## File Map
+## 파일 맵
 
-### Runtime files to modify
+### 수정할 런타임 파일
 - `public/js/workout/pose-engine.js`
-  - Add a normalized gate-input summary builder for frame inclusion, key-joint visibility, estimated view, stability, and stable-frame streak.
+  - 프레임 포함률, 주요 관절 가시성, 추정 뷰, 안정성, 안정 프레임 연속 횟수를 위한 정규화된 게이트 입력 요약 빌더 추가.
 - `public/js/workout/scoring-engine.js`
-  - Add threshold constants, `evaluateQualityGate`, rep outcome state transitions, and CommonJS test exports.
+  - 임계값 상수, `evaluateQualityGate`, rep 결과 상태 전이, CommonJS 테스트 익스포트 추가.
 - `public/js/workout/session-controller.js`
-  - Add gate-aware UI messaging, withhold suppression, and resume-after-stability logic.
+  - 게이트 인지 UI 메시징, 보류 억제, 안정성 복귀 후 재개 로직 추가.
 - `public/js/workout/exercises/squat-exercise.js`
-  - Add view-aware metric priority rules and keep only movement-quality failures in exercise evaluation.
+  - 뷰 인지 메트릭 우선순위 규칙 추가, 운동 평가에는 동작 품질 실패만 남김.
 - `public/js/workout/exercises/push-up-exercise.js`
-  - Remove confidence/view failures from exercise reasons and keep only movement-quality failures.
+  - 운동 reason에서 신뢰도/뷰 실패 제거, 동작 품질 실패만 남김.
 - `public/js/workout/session-buffer.js`
-  - Add MVP export fields for withhold events and rep outcome summaries.
+  - 보류 이벤트 및 rep 결과 요약을 위한 MVP 익스포트 필드 추가.
 
-### Test files to create or modify
-- Create: `test/workout/quality-gate.test.js`
-- Create: `test/workout/scoring-state-machine.test.js`
-- Create: `test/workout/session-controller-gate-ui.test.js`
-- Create: `test/workout/exercise-rule-separation.test.js`
-- Modify: `test/session-buffer.test.js`
+### 생성 또는 수정할 테스트 파일
+- 생성: `test/workout/quality-gate.test.js`
+- 생성: `test/workout/scoring-state-machine.test.js`
+- 생성: `test/workout/session-controller-gate-ui.test.js`
+- 생성: `test/workout/exercise-rule-separation.test.js`
+- 수정: `test/session-buffer.test.js`
 
-### Validation docs to create
-- Create: `docs/superpowers/validation/video-label-template.md`
+### 생성할 검증 문서
+- 생성: `docs/superpowers/validation/video-label-template.md`
 
 ---
 
-### Task 1: Standardize quality-gate inputs and thresholds
+### 작업 1: 품질 게이트 입력과 임계값 표준화
 
-**Files:**
-- Modify: `public/js/workout/pose-engine.js`
-- Modify: `public/js/workout/scoring-engine.js`
-- Test: `test/workout/quality-gate.test.js`
+**파일:**
+- 수정: `public/js/workout/pose-engine.js`
+- 수정: `public/js/workout/scoring-engine.js`
+- 테스트: `test/workout/quality-gate.test.js`
 
-- [ ] **Step 1: Write the failing quality-gate tests**
+- [ ] **단계 1: 실패하는 품질 게이트 테스트 작성**
 
 ```js
 const test = require('node:test');
@@ -98,12 +98,12 @@ test('evaluateQualityGate returns pass when all seed thresholds are met', () => 
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **단계 2: 테스트 실행하여 실패 확인**
 
-Run: `node --test test/workout/quality-gate.test.js`
-Expected: FAIL because `evaluateQualityGate` and `QUALITY_GATE_THRESHOLDS` are not exported yet.
+실행: `node --test test/workout/quality-gate.test.js`
+예상: FAIL — `evaluateQualityGate`와 `QUALITY_GATE_THRESHOLDS`가 아직 익스포트되지 않았기 때문.
 
-- [ ] **Step 3: Add the threshold constants and quality-gate evaluator to `scoring-engine.js`**
+- [ ] **단계 3: `scoring-engine.js`에 임계값 상수와 품질 게이트 평가기 추가**
 
 ```js
 const QUALITY_GATE_THRESHOLDS = {
@@ -159,7 +159,7 @@ if (typeof module !== 'undefined') {
 }
 ```
 
-- [ ] **Step 4: Add a normalized gate-input builder to `pose-engine.js`**
+- [ ] **단계 4: `pose-engine.js`에 정규화된 게이트 입력 빌더 추가**
 
 ```js
 function buildQualityGateInputs({
@@ -189,12 +189,12 @@ function buildQualityGateInputs({
 }
 ```
 
-- [ ] **Step 5: Run the quality-gate test again**
+- [ ] **단계 5: 품질 게이트 테스트 다시 실행**
 
-Run: `node --test test/workout/quality-gate.test.js`
-Expected: PASS with 2 passing tests and 0 failures.
+실행: `node --test test/workout/quality-gate.test.js`
+예상: PASS (통과 테스트 2개, 실패 0개).
 
-- [ ] **Step 6: Commit Task 1**
+- [ ] **단계 6: 작업 1 커밋**
 
 ```bash
 git add public/js/workout/pose-engine.js public/js/workout/scoring-engine.js test/workout/quality-gate.test.js
@@ -203,15 +203,15 @@ git commit -m "feat: add runtime quality gate thresholds"
 
 ---
 
-### Task 2: Add gate-aware scoring state transitions and session-controller guidance
+### 작업 2: 게이트 인지 채점 상태 전이와 세션 컨트롤러 안내 추가
 
-**Files:**
-- Modify: `public/js/workout/scoring-engine.js`
-- Modify: `public/js/workout/session-controller.js`
-- Test: `test/workout/scoring-state-machine.test.js`
-- Test: `test/workout/session-controller-gate-ui.test.js`
+**파일:**
+- 수정: `public/js/workout/scoring-engine.js`
+- 수정: `public/js/workout/session-controller.js`
+- 테스트: `test/workout/scoring-state-machine.test.js`
+- 테스트: `test/workout/session-controller-gate-ui.test.js`
 
-- [ ] **Step 1: Write the failing state-machine and UI-message tests**
+- [ ] **단계 1: 실패하는 상태 머신 및 UI 메시지 테스트 작성**
 
 ```js
 const test = require('node:test');
@@ -249,12 +249,12 @@ test('shouldResumeScoring requires the full stable-frame streak', () => {
 });
 ```
 
-- [ ] **Step 2: Run the two tests to verify they fail**
+- [ ] **단계 2: 두 테스트 실행하여 실패 확인**
 
-Run: `node --test test/workout/scoring-state-machine.test.js test/workout/session-controller-gate-ui.test.js`
-Expected: FAIL because `applyRepOutcome`, `mapWithholdReasonToMessage`, and `shouldResumeScoring` are not exported yet.
+실행: `node --test test/workout/scoring-state-machine.test.js test/workout/session-controller-gate-ui.test.js`
+예상: FAIL — `applyRepOutcome`, `mapWithholdReasonToMessage`, `shouldResumeScoring`이 아직 익스포트되지 않았기 때문.
 
-- [ ] **Step 3: Implement rep outcome state transitions in `scoring-engine.js`**
+- [ ] **단계 3: `scoring-engine.js`에 rep 결과 상태 전이 구현**
 
 ```js
 function applyRepOutcome({ gateResult, repState, exerciseEvaluation }) {
@@ -291,7 +291,7 @@ function applyRepOutcome({ gateResult, repState, exerciseEvaluation }) {
 }
 ```
 
-- [ ] **Step 4: Implement message mapping and resume gating in `session-controller.js`**
+- [ ] **단계 4: `session-controller.js`에 메시지 매핑과 재개 게이팅 구현**
 
 ```js
 function mapWithholdReasonToMessage(reason) {
@@ -321,7 +321,7 @@ if (typeof module !== 'undefined') {
 }
 ```
 
-- [ ] **Step 5: Wire the controller so withhold suppresses scoring and repeated alerts are cooled down**
+- [ ] **단계 5: 컨트롤러에 보류 시 채점 억제, 반복 알림 쿨다운 적용**
 
 ```js
 if (gateEvaluation.result === 'withhold') {
@@ -342,12 +342,12 @@ this.pauseRepScoring = false;
 this.currentWithholdReason = null;
 ```
 
-- [ ] **Step 6: Run the state-machine and UI-message tests again**
+- [ ] **단계 6: 상태 머신 및 UI 메시지 테스트 다시 실행**
 
-Run: `node --test test/workout/scoring-state-machine.test.js test/workout/session-controller-gate-ui.test.js`
-Expected: PASS with all tests green and no failures.
+실행: `node --test test/workout/scoring-state-machine.test.js test/workout/session-controller-gate-ui.test.js`
+예상: PASS (모든 테스트 통과, 실패 없음).
 
-- [ ] **Step 7: Commit Task 2**
+- [ ] **단계 7: 작업 2 커밋**
 
 ```bash
 git add public/js/workout/scoring-engine.js public/js/workout/session-controller.js test/workout/scoring-state-machine.test.js test/workout/session-controller-gate-ui.test.js
@@ -356,14 +356,14 @@ git commit -m "feat: add gate-aware scoring state transitions"
 
 ---
 
-### Task 3: Refine exercise modules so only movement-quality failures remain
+### 작업 3: 운동 모듈 정제 — 동작 품질 실패만 남김
 
-**Files:**
-- Modify: `public/js/workout/exercises/squat-exercise.js`
-- Modify: `public/js/workout/exercises/push-up-exercise.js`
-- Test: `test/workout/exercise-rule-separation.test.js`
+**파일:**
+- 수정: `public/js/workout/exercises/squat-exercise.js`
+- 수정: `public/js/workout/exercises/push-up-exercise.js`
+- 테스트: `test/workout/exercise-rule-separation.test.js`
 
-- [ ] **Step 1: Write the failing exercise-rule tests**
+- [ ] **단계 1: 실패하는 운동 규칙 테스트 작성**
 
 ```js
 const test = require('node:test');
@@ -397,12 +397,12 @@ test('normalizePushUpEvaluation removes low_confidence from exercise failures', 
 });
 ```
 
-- [ ] **Step 2: Run the exercise-rule tests to verify they fail**
+- [ ] **단계 2: 운동 규칙 테스트 실행하여 실패 확인**
 
-Run: `node --test test/workout/exercise-rule-separation.test.js`
-Expected: FAIL because the helper functions do not exist yet.
+실행: `node --test test/workout/exercise-rule-separation.test.js`
+예상: FAIL — 헬퍼 함수가 아직 존재하지 않기 때문.
 
-- [ ] **Step 3: Add view-priority helpers to `squat-exercise.js`**
+- [ ] **단계 3: `squat-exercise.js`에 뷰 우선순위 헬퍼 추가**
 
 ```js
 function getSquatMetricPriority(view) {
@@ -435,7 +435,7 @@ if (typeof module !== 'undefined') {
 }
 ```
 
-- [ ] **Step 4: Normalize push-up evaluation so confidence/view problems never leave the common gate**
+- [ ] **단계 4: 푸쉬업 평가 정규화 — 신뢰도/뷰 문제가 공통 게이트를 벗어나지 않도록**
 
 ```js
 function normalizePushUpEvaluation(evaluation) {
@@ -464,12 +464,12 @@ if (typeof module !== 'undefined') {
 }
 ```
 
-- [ ] **Step 5: Run the exercise-rule tests again**
+- [ ] **단계 5: 운동 규칙 테스트 다시 실행**
 
-Run: `node --test test/workout/exercise-rule-separation.test.js`
-Expected: PASS with all tests green.
+실행: `node --test test/workout/exercise-rule-separation.test.js`
+예상: PASS (모든 테스트 통과).
 
-- [ ] **Step 6: Commit Task 3**
+- [ ] **단계 6: 작업 3 커밋**
 
 ```bash
 git add public/js/workout/exercises/squat-exercise.js public/js/workout/exercises/push-up-exercise.js test/workout/exercise-rule-separation.test.js
@@ -478,14 +478,14 @@ git commit -m "feat: separate movement failures from input quality failures"
 
 ---
 
-### Task 4: Persist MVP export data and add validation artifacts
+### 작업 4: MVP 익스포트 데이터 보존 및 검증 아티팩트 추가
 
-**Files:**
-- Modify: `public/js/workout/session-buffer.js`
-- Modify: `test/session-buffer.test.js`
-- Create: `docs/superpowers/validation/video-label-template.md`
+**파일:**
+- 수정: `public/js/workout/session-buffer.js`
+- 수정: `test/session-buffer.test.js`
+- 생성: `docs/superpowers/validation/video-label-template.md`
 
-- [ ] **Step 1: Extend the failing export test in `test/session-buffer.test.js`**
+- [ ] **단계 1: `test/session-buffer.test.js`에 실패하는 익스포트 테스트 확장**
 
 ```js
 const test = require('node:test');
@@ -523,12 +523,12 @@ test('export includes withhold counts and rep-level scoring states', () => {
 });
 ```
 
-- [ ] **Step 2: Run the session-buffer test to verify it fails**
+- [ ] **단계 2: 세션 버퍼 테스트 실행하여 실패 확인**
 
-Run: `node --test test/session-buffer.test.js`
-Expected: FAIL because the export payload does not include the new MVP fields yet.
+실행: `node --test test/session-buffer.test.js`
+예상: FAIL — 익스포트 페이로드에 새 MVP 필드가 아직 포함되지 않았기 때문.
 
-- [ ] **Step 3: Add the MVP export fields to `session-buffer.js`**
+- [ ] **단계 3: `session-buffer.js`에 MVP 익스포트 필드 추가**
 
 ```js
 recordRepResult(repResult) {
@@ -564,10 +564,10 @@ export() {
 }
 ```
 
-- [ ] **Step 4: Create the validation label template doc**
+- [ ] **단계 4: 검증 라벨 템플릿 문서 생성**
 
 ```md
-# Validation Video Label
+# 검증 비디오 라벨
 
 - video_id:
 - file_name:
@@ -581,19 +581,19 @@ export() {
 - notes:
 ```
 
-Save to: `docs/superpowers/validation/video-label-template.md`
+저장 위치: `docs/superpowers/validation/video-label-template.md`
 
-- [ ] **Step 5: Run the session-buffer test again**
+- [ ] **단계 5: 세션 버퍼 테스트 다시 실행**
 
-Run: `node --test test/session-buffer.test.js`
-Expected: PASS with all session-buffer tests green.
+실행: `node --test test/session-buffer.test.js`
+예상: PASS (모든 세션 버퍼 테스트 통과).
 
-- [ ] **Step 6: Run the focused regression suite for all new runtime checks**
+- [ ] **단계 6: 모든 신규 런타임 검사에 대한 집중 회귀 스위트 실행**
 
-Run: `node --test test/workout/quality-gate.test.js test/workout/scoring-state-machine.test.js test/workout/session-controller-gate-ui.test.js test/workout/exercise-rule-separation.test.js test/session-buffer.test.js`
-Expected: PASS with all listed tests green and 0 failures.
+실행: `node --test test/workout/quality-gate.test.js test/workout/scoring-state-machine.test.js test/workout/session-controller-gate-ui.test.js test/workout/exercise-rule-separation.test.js test/session-buffer.test.js`
+예상: PASS (나열된 모든 테스트 통과, 실패 0개).
 
-- [ ] **Step 7: Commit Task 4**
+- [ ] **단계 7: 작업 4 커밋**
 
 ```bash
 git add public/js/workout/session-buffer.js test/session-buffer.test.js docs/superpowers/validation/video-label-template.md
@@ -602,41 +602,41 @@ git commit -m "feat: export runtime validation data for offline review"
 
 ---
 
-## Final Verification
+## 최종 검증
 
-- [ ] Run: `npm test`
-- [ ] Expected: the full Node test suite passes with no new failures.
-- [ ] Manually verify in the browser:
-  - low-quality frames show corrective withhold guidance instead of low scores
-  - scoring resumes only after the stable-frame streak is restored
-  - squat FRONT/SIDE/DIAGONAL views use the intended metric priority rules
-  - push-up SIDE mismatch never becomes an exercise hard fail
-  - exported session JSON contains `withhold_count`, `withhold_reason_counts`, and `rep_results`
+- [ ] 실행: `npm test`
+- [ ] 예상: 전체 Node 테스트 스위트가 새로운 실패 없이 통과한다.
+- [ ] 브라우저에서 수동 확인:
+  - 저품질 프레임은 낮은 점수 대신 교정 보류 안내를 표시한다
+  - 안정 프레임 연속 횟수가 회복된 후에만 채점이 재개된다
+  - 스쿼트 FRONT/SIDE/DIAGONAL 뷰는 의도된 메트릭 우선순위 규칙을 사용한다
+  - 푸쉬업 SIDE 불일치가 운동 hard fail이 되지 않는다
+  - 익스포트된 세션 JSON에 `withhold_count`, `withhold_reason_counts`, `rep_results`가 포함된다
 
 ---
 
-## Spec Coverage Check
+## 스펙 커버리지 확인
 
-- Quality-gate threshold seeds: covered by Task 1
-- Gate-vs-exercise responsibility split: covered by Tasks 1 and 3
-- Scoring state transitions (`scored|withheld|hard_fail|soft_fail`): covered by Task 2
-- Session-controller guidance and resume behavior: covered by Task 2
-- Squat view-priority rules: covered by Task 3
-- Push-up confidence/view cleanup: covered by Task 3
-- Session-buffer MVP export and validation label template: covered by Task 4
+- 품질 게이트 임계값 시드: 작업 1에서 커버
+- 게이트 vs 운동 책임 분리: 작업 1과 3에서 커버
+- 채점 상태 전이 (`scored|withheld|hard_fail|soft_fail`): 작업 2에서 커버
+- 세션 컨트롤러 안내 및 재개 동작: 작업 2에서 커버
+- 스쿼트 뷰 우선순위 규칙: 작업 3에서 커버
+- 푸쉬업 신뢰도/뷰 정리: 작업 3에서 커버
+- 세션 버퍼 MVP 익스포트 및 검증 라벨 템플릿: 작업 4에서 커버
 
-## Placeholder Scan
+## 플레이스홀더 스캔
 
-- No `TODO`, `TBD`, or deferred implementation markers remain.
-- All code-changing steps include concrete snippets or exact files to update.
-- All test steps include exact commands.
+- `TODO`, `TBD`, 또는 연기된 구현 마커가 남아있지 않다.
+- 모든 코드 변경 단계는 구체적인 스니펫 또는 수정할 정확한 파일을 포함한다.
+- 모든 테스트 단계는 정확한 명령어를 포함한다.
 
-## Type Consistency Check
+## 타입 일관성 확인
 
-- `evaluateQualityGate` always returns `{ result, reason }`
-- `applyRepOutcome` always returns `{ repResult, incrementRepCount, discardActiveRep, scoreCapApplied }`
-- `mapWithholdReasonToMessage` always returns a string
-- `getSquatMetricPriority` always returns `{ primary, secondary, disallowedHardFailMetrics }`
-- `normalizePushUpEvaluation` always returns an evaluation object with `hardFailReason` and `softFailReasons`
+- `evaluateQualityGate`는 항상 `{ result, reason }`을 반환한다
+- `applyRepOutcome`은 항상 `{ repResult, incrementRepCount, discardActiveRep, scoreCapApplied }`를 반환한다
+- `mapWithholdReasonToMessage`는 항상 문자열을 반환한다
+- `getSquatMetricPriority`는 항상 `{ primary, secondary, disallowedHardFailMetrics }`를 반환한다
+- `normalizePushUpEvaluation`은 항상 `hardFailReason`과 `softFailReasons`를 가진 평가 객체를 반환한다
 
 ---

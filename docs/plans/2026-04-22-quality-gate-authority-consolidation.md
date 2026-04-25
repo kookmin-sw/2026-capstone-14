@@ -1,40 +1,40 @@
-# Quality Gate Authority Consolidation Implementation Plan
+# 품질 게이트 권한 통합 구현 계획
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **에이전틱 작업자용:** 필수 하위 스킬: superpowers:subagent-driven-development (권장) 또는 superpowers:executing-plans를 사용하여 이 계획을 작업 단위로 구현할 것. 단계는 체크박스(`- [ ]`) 문법으로 추적.
 
-**Goal:** Consolidate all final quality-gate authority into `scoring-engine.js`, remove gate-like reason emission from exercise modules, standardize reason codes per the approved spec, and add tests that enforce module separation.
+**목표:** 모든 최종 품질 게이트 권한을 `scoring-engine.js`로 통합하고, 운동 모듈에서 게이트 유사 reason 생성을 제거하며, 승인된 스펙에 맞춰 reason code를 표준화하고, 모듈 분리를 강제하는 테스트를 추가한다.
 
-**Architecture:** The common quality gate in `scoring-engine.js` becomes the sole `pass`/`withhold` decision-maker. Exercise modules provide only metadata and performance semantics. `session-controller.js` consumes only resolved states from the gate. `pose-engine.js` remains a pure signal producer.
+**아키텍처:** `scoring-engine.js`의 공통 품질 게이트가 유일한 `pass`/`withhold` 결정자가 된다. 운동 모듈은 메타데이터와 수행 의미만 제공한다. `session-controller.js`는 게이트로부터 결정된 상태만 소비한다. `pose-engine.js`는 순수 신호 생성기로 남는다.
 
-**Tech Stack:** Vanilla JavaScript (browser + Node.js test runner), `node:test`, `node:assert/strict`
+**기술 스택:** Vanilla JavaScript (브라우저 + Node.js 테스트 러너), `node:test`, `node:assert/strict`
 
 ---
 
-## File Map
+## 파일 맵
 
-| File | Role in this plan |
+| 파일 | 이 계획에서의 역할 |
 |---|---|
-| `public/js/workout/scoring-engine.js` | **Modify** — standardize gate reason codes to match spec's canonical names; add `GATE_ONLY_REASONS` constant; export it |
-| `public/js/workout/exercises/push-up-exercise.js` | **Modify** — remove `getFrameGate` (gate logic belongs to scoring-engine); remove `view_mismatch` and `low_confidence` from `scoreRep` hardFails; add declarative `requirements` metadata |
-| `public/js/workout/session-controller.js` | **Modify** — remove `getFrameGateResult` call; rely solely on `evaluateQualityGate` for gating; keep UX mapping helpers |
-| `test/workout/quality-gate.test.js` | **Modify** — add tests for standardized reason codes, `GATE_ONLY_REASONS` constant |
-| `test/workout/exercise-rule-separation.test.js` | **Modify** — add tests proving exercise modules do NOT emit gate-owned reasons |
-| `test/workout/authority-separation.test.js` | **Create** — new test file for cross-module authority contract enforcement |
+| `public/js/workout/scoring-engine.js` | **수정** — 게이트 reason code를 스펙의 정식 이름과 일치하도록 표준화; `GATE_ONLY_REASONS` 상수 추가; 익스포트 |
+| `public/js/workout/exercises/push-up-exercise.js` | **수정** — `getFrameGate` 제거 (게이트 로직은 scoring-engine 소관); `scoreRep`의 hardFails에서 `view_mismatch`와 `low_confidence` 제거; 선언적 `requirements` 메타데이터 추가 |
+| `public/js/workout/session-controller.js` | **수정** — `getFrameGateResult` 호출 제거; 게이팅을 위해 `evaluateQualityGate`에만 의존; UX 매핑 헬퍼 유지 |
+| `test/workout/quality-gate.test.js` | **수정** — 표준화된 reason code, `GATE_ONLY_REASONS` 상수 테스트 추가 |
+| `test/workout/exercise-rule-separation.test.js` | **수정** — 운동 모듈이 게이트 소유 reason을 생성하지 않음을 증명하는 테스트 추가 |
+| `test/workout/authority-separation.test.js` | **생성** — 크로스 모듈 권한 계약 강제를 위한 신규 테스트 파일 |
 
 ---
 
-## Task 1: Standardize Quality Gate Reason Codes in scoring-engine.js
+## 작업 1: scoring-engine.js의 품질 게이트 Reason Code 표준화
 
-**Files:**
-- Modify: `public/js/workout/scoring-engine.js` (lines 664-714)
-- Modify: `test/workout/quality-gate.test.js` (add new tests at end)
+**파일:**
+- 수정: `public/js/workout/scoring-engine.js` (lines 664-714)
+- 수정: `test/workout/quality-gate.test.js` (끝에 새 테스트 추가)
 
-- [ ] **Step 1: Write the failing test for standardized reason codes**
+- [ ] **단계 1: 표준화된 reason code에 대한 실패 테스트 작성**
 
-Add to `test/workout/quality-gate.test.js`:
+`test/workout/quality-gate.test.js`에 추가:
 
 ```javascript
-// ── Standardized reason codes per spec §Appendix ──
+// ── 스펙 §부록에 따른 표준화된 reason code ──
 
 test('evaluateQualityGate withholds with "joints_missing" when key joints not visible', () => {
   const result = evaluateQualityGate({
@@ -154,18 +154,18 @@ test('GATE_ONLY_REASONS constant contains all spec-defined gate-owned reason cod
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **단계 2: 테스트 실행하여 실패 확인**
 
-Run: `node --test test/workout/quality-gate.test.js`
-Expected: FAIL — `GATE_ONLY_REASONS` is not defined; reason codes like `joints_missing`, `tracked_joints_low`, `out_of_frame`, `low_confidence`, `view_unstable` are not returned by `evaluateQualityGate`.
+실행: `node --test test/workout/quality-gate.test.js`
+예상: FAIL — `GATE_ONLY_REASONS`가 정의되지 않음; `joints_missing`, `tracked_joints_low`, `out_of_frame`, `low_confidence`, `view_unstable` 같은 reason code가 `evaluateQualityGate`에서 반환되지 않음.
 
-- [ ] **Step 3: Implement standardized reason codes in scoring-engine.js**
+- [ ] **단계 3: scoring-engine.js에 표준화된 reason code 구현**
 
-Replace the `evaluateQualityGate` function body (lines 684-714) and add the `GATE_ONLY_REASONS` constant:
+`evaluateQualityGate` 함수 본문(lines 684-714)을 교체하고 `GATE_ONLY_REASONS` 상수 추가:
 
 ```javascript
-// ── Gate-owned reason codes (spec §Appendix) ──
-// These reason codes MUST NOT be emitted by exercise modules.
+// ── 게이트 소유 reason code (스펙 §부록) ──
+// 이 reason code는 운동 모듈에서 생성되어서는 안 된다.
 const GATE_ONLY_REASONS = [
   'out_of_frame',
   'tracked_joints_low',
@@ -176,13 +176,13 @@ const GATE_ONLY_REASONS = [
 ];
 
 /**
- * Evaluate whether the current frame input quality is sufficient for scoring.
- * Returns { result: 'pass' | 'withhold', reason: string | null }
+ * 현재 프레임 입력 품질이 채점에 충분한지 평가한다.
+ * { result: 'pass' | 'withhold', reason: string | null } 반환
  *
- * Input quality failures are NEVER delegated to exercise modules.
- * Only pass → exercise module evaluation runs.
+ * 입력 품질 실패는 절대 운동 모듈로 위임되지 않는다.
+ * pass된 경우에만 → 운동 모듈 평가가 실행된다.
  *
- * Reason codes follow the spec's canonical names (§Appendix):
+ * Reason code는 스펙의 정식 이름(§부록)을 따른다:
  *   out_of_frame, tracked_joints_low, view_unstable,
  *   view_mismatch, low_confidence, joints_missing
  */
@@ -219,7 +219,7 @@ function evaluateQualityGate(inputs, context) {
 }
 ```
 
-Update the window exports (around line 763-768) to include `GATE_ONLY_REASONS`:
+`GATE_ONLY_REASONS`를 포함하도록 window 익스포트 업데이트 (766행 부근):
 
 ```javascript
 if (typeof window !== 'undefined') {
@@ -231,7 +231,7 @@ if (typeof window !== 'undefined') {
 }
 ```
 
-Update the CommonJS exports (around line 771-778):
+CommonJS 익스포트 업데이트 (773행 부근):
 
 ```javascript
 if (typeof module !== 'undefined') {
@@ -245,37 +245,37 @@ if (typeof module !== 'undefined') {
 }
 ```
 
-- [ ] **Step 4: Update existing tests in quality-gate.test.js to match new reason codes**
+- [ ] **단계 4: quality-gate.test.js의 기존 테스트를 새 reason code에 맞춰 업데이트**
 
-Replace the existing test expectations for reason codes:
+기존 테스트의 reason code 기대값 교체:
 
 ```javascript
 // test: 'evaluateQualityGate returns withhold for low key-joint visibility'
-// Change: assert.equal(result.reason, 'joints_missing');
+// 변경: assert.equal(result.reason, 'joints_missing');
 
 // test: 'evaluateQualityGate returns withhold for body not fully visible'
-// Change: assert.equal(result.reason, 'out_of_frame');
+// 변경: assert.equal(result.reason, 'out_of_frame');
 
 // test: 'evaluateQualityGate returns withhold for unstable_tracking'
-// Change: assert.equal(result.reason, 'view_unstable');
+// 변경: assert.equal(result.reason, 'view_unstable');
 
 // test: 'evaluateQualityGate returns withhold for insufficient stable frames'
-// Change: assert.equal(result.reason, 'view_unstable');
+// 변경: assert.equal(result.reason, 'view_unstable');
 
 // test: 'evaluateQualityGate returns withhold for camera too close or far'
-// Change: assert.equal(result.reason, 'out_of_frame');
+// 변경: assert.equal(result.reason, 'out_of_frame');
 
 // test: 'evaluateQualityGate returns withhold for low detection confidence'
-// Change: assert.equal(result.reason, 'low_confidence');
+// 변경: assert.equal(result.reason, 'low_confidence');
 
 // test: 'evaluateQualityGate returns withhold for low tracking confidence'
-// Change: assert.equal(result.reason, 'tracked_joints_low');
+// 변경: assert.equal(result.reason, 'tracked_joints_low');
 ```
 
-Also update `session-controller-gate-ui.test.js` to use the new reason code names:
+또한 `session-controller-gate-ui.test.js`도 새 reason code 이름을 사용하도록 업데이트:
 
 ```javascript
-// In mapWithholdReasonToMessage tests, update reason codes:
+// mapWithholdReasonToMessage 테스트에서 reason code 업데이트:
 // 'body_not_fully_visible' → 'out_of_frame'
 // 'key_joints_not_visible' → 'joints_missing'
 // 'unstable_tracking' → 'view_unstable'
@@ -285,15 +285,15 @@ Also update `session-controller-gate-ui.test.js` to use the new reason code name
 // 'low_tracking_confidence' → 'tracked_joints_low'
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **단계 5: 테스트 실행하여 통과 확인**
 
-Run: `node --test test/workout/quality-gate.test.js`
-Expected: PASS (all tests)
+실행: `node --test test/workout/quality-gate.test.js`
+예상: PASS (모든 테스트)
 
-Run: `node --test test/workout/session-controller-gate-ui.test.js`
-Expected: PASS (all tests)
+실행: `node --test test/workout/session-controller-gate-ui.test.js`
+예상: PASS (모든 테스트)
 
-- [ ] **Step 6: Commit**
+- [ ] **단계 6: 커밋**
 
 ```bash
 git add public/js/workout/scoring-engine.js test/workout/quality-gate.test.js test/workout/session-controller-gate-ui.test.js
@@ -302,15 +302,15 @@ git commit -m "feat: standardize quality gate reason codes per spec appendix"
 
 ---
 
-## Task 2: Update session-controller.js Reason Code Mapping
+## 작업 2: session-controller.js Reason Code 매핑 업데이트
 
-**Files:**
-- Modify: `public/js/workout/session-controller.js` (lines 1901-1913, `mapWithholdReasonToMessage`)
-- Modify: `test/workout/session-controller-gate-ui.test.js` (reason code references)
+**파일:**
+- 수정: `public/js/workout/session-controller.js` (lines 1901-1913, `mapWithholdReasonToMessage`)
+- 수정: `test/workout/session-controller-gate-ui.test.js` (reason code 참조)
 
-- [ ] **Step 1: Write the failing test for updated message mapping**
+- [ ] **단계 1: 업데이트된 메시지 매핑에 대한 실패 테스트 작성**
 
-Add to `test/workout/session-controller-gate-ui.test.js`:
+`test/workout/session-controller-gate-ui.test.js`에 추가:
 
 ```javascript
 test('mapWithholdReasonToMessage handles all spec-standardized reason codes', () => {
@@ -334,18 +334,18 @@ test('mapWithholdReasonToMessage handles all spec-standardized reason codes', ()
     mapWithholdReasonToMessage('low_confidence'),
     '카메라 위치와 조명을 조정한 뒤 다시 자세를 잡아주세요.'
   );
-  // view_mismatch already tested — keep existing test
+  // view_mismatch는 이미 테스트됨 — 기존 테스트 유지
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **단계 2: 테스트 실행하여 실패 확인**
 
-Run: `node --test test/workout/session-controller-gate-ui.test.js -t "handles all spec-standardized"`
-Expected: FAIL — `out_of_frame`, `joints_missing`, `tracked_joints_low`, `view_unstable`, `low_confidence` are not keys in the messages map.
+실행: `node --test test/workout/session-controller-gate-ui.test.js -t "handles all spec-standardized"`
+예상: FAIL — `out_of_frame`, `joints_missing`, `tracked_joints_low`, `view_unstable`, `low_confidence`가 메시지 맵의 키가 아님.
 
-- [ ] **Step 3: Update mapWithholdReasonToMessage in session-controller.js**
+- [ ] **단계 3: session-controller.js의 mapWithholdReasonToMessage 업데이트**
 
-Replace the `mapWithholdReasonToMessage` function (lines 1901-1913):
+`mapWithholdReasonToMessage` 함수(lines 1901-1913) 교체:
 
 ```javascript
 function mapWithholdReasonToMessage(reason) {
@@ -361,9 +361,9 @@ function mapWithholdReasonToMessage(reason) {
 }
 ```
 
-- [ ] **Step 4: Update existing tests in session-controller-gate-ui.test.js**
+- [ ] **단계 4: session-controller-gate-ui.test.js의 기존 테스트 업데이트**
 
-Replace the old reason code assertions in the first test:
+첫 번째 테스트의 이전 reason code assertion 교체:
 
 ```javascript
 test('mapWithholdReasonToMessage returns correct messages for all reason codes', () => {
@@ -394,28 +394,28 @@ test('mapWithholdReasonToMessage returns correct messages for all reason codes',
 });
 ```
 
-Update the `shouldSuppressScoring` tests that reference old reason codes:
+이전 reason code를 참조하는 `shouldSuppressScoring` 테스트 업데이트:
 
 ```javascript
-// In test: 'shouldSuppressScoring suppresses when gate returns withhold'
-// Change reason from 'view_mismatch' to keep it (view_mismatch is still valid)
+// test: 'shouldSuppressScoring suppresses when gate returns withhold'
+// reason을 'view_mismatch'에서 그대로 유지 (view_mismatch는 여전히 유효함)
 
-// In test: 'shouldSuppressScoring stays suppressed until stable-frame threshold is restored'
-// Change withholdReason from 'unstable_tracking' to 'view_unstable'
+// test: 'shouldSuppressScoring stays suppressed until stable-frame threshold is restored'
+// withholdReason을 'unstable_tracking'에서 'view_unstable'로 변경
 
-// In test: 'shouldSuppressScoring clears tracker state on resume'
-// Change reason from 'body_not_fully_visible' to 'out_of_frame'
+// test: 'shouldSuppressScoring clears tracker state on resume'
+// reason을 'body_not_fully_visible'에서 'out_of_frame'으로 변경
 
-// In test: 'live controller wiring: full quality-gate frame flow'
-// Change reason from 'unstable_tracking' to 'view_unstable'
+// test: 'live controller wiring: full quality-gate frame flow'
+// reason을 'unstable_tracking'에서 'view_unstable'로 변경
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **단계 5: 테스트 실행하여 통과 확인**
 
-Run: `node --test test/workout/session-controller-gate-ui.test.js`
-Expected: PASS (all tests)
+실행: `node --test test/workout/session-controller-gate-ui.test.js`
+예상: PASS (모든 테스트)
 
-- [ ] **Step 6: Commit**
+- [ ] **단계 6: 커밋**
 
 ```bash
 git add public/js/workout/session-controller.js test/workout/session-controller-gate-ui.test.js
@@ -424,19 +424,19 @@ git commit -m "refactor: update session-controller reason code mapping to spec n
 
 ---
 
-## Task 3: Remove getFrameGate from push-up-exercise.js and Add Declarative Metadata
+## 작업 3: push-up-exercise.js에서 getFrameGate 제거 및 선언적 메타데이터 추가
 
-**Files:**
-- Modify: `public/js/workout/exercises/push-up-exercise.js` (remove `getFrameGate`, add `requirements` metadata, clean `scoreRep`)
-- Modify: `test/workout/exercise-rule-separation.test.js` (add tests for declarative metadata and removed gate)
+**파일:**
+- 수정: `public/js/workout/exercises/push-up-exercise.js` (`getFrameGate` 제거, `requirements` 메타데이터 추가, `scoreRep` 정리)
+- 수정: `test/workout/exercise-rule-separation.test.js` (선언적 메타데이터 및 제거된 게이트에 대한 테스트 추가)
 
-- [ ] **Step 1: Write the failing test for declarative exercise metadata**
+- [ ] **단계 1: 선언적 운동 메타데이터에 대한 실패 테스트 작성**
 
-Add to `test/workout/exercise-rule-separation.test.js`:
+`test/workout/exercise-rule-separation.test.js`에 추가:
 
 ```javascript
 // ---------------------------------------------------------------------------
-// Push-up declarative metadata contract (spec §4.2)
+// 푸쉬업 선언적 메타데이터 계약 (스펙 §4.2)
 // ---------------------------------------------------------------------------
 
 test('pushUpExercise exposes requirements metadata with requiredViews', () => {
@@ -458,23 +458,23 @@ test('pushUpExercise does NOT have getFrameGate method (gate belongs to scoring-
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **단계 2: 테스트 실행하여 실패 확인**
 
-Run: `node --test test/workout/exercise-rule-separation.test.js -t "pushUpExercise exposes requirements"`
-Expected: FAIL — `requirements` metadata does not exist; `getFrameGate` still exists.
+실행: `node --test test/workout/exercise-rule-separation.test.js -t "pushUpExercise exposes requirements"`
+예상: FAIL — `requirements` 메타데이터가 존재하지 않음; `getFrameGate`가 여전히 존재함.
 
-- [ ] **Step 3: Remove getFrameGate and add requirements metadata in push-up-exercise.js**
+- [ ] **단계 3: push-up-exercise.js에서 getFrameGate 제거 및 requirements 메타데이터 추가**
 
-Remove the entire `getFrameGate` method (lines 140-209) from the `pushUpExercise` object. This method emits gate-owned reasons (`joints_missing`, `tracked_joints_low`, `out_of_frame`, `view_mismatch`, `view_unstable`, `quality_low`) which violates spec §3.2.
+`pushUpExercise` 객체에서 전체 `getFrameGate` 메소드(lines 140-209) 제거. 이 메소드는 게이트 소유 reason(`joints_missing`, `tracked_joints_low`, `out_of_frame`, `view_mismatch`, `view_unstable`, `quality_low`)을 생성하므로 스펙 §3.2를 위반한다.
 
-Add `requirements` metadata right after `code: 'push_up'` (after line 29):
+`code: 'push_up'` 바로 다음(29행 뒤)에 `requirements` 메타데이터 추가:
 
 ```javascript
     code: 'push_up',
 
     /**
-     * Declarative requirement metadata consumed by the common quality gate.
-     * Spec §4.2 — exercise modules provide requirements as data, not as decision logic.
+     * 공통 품질 게이트가 소비하는 선언적 요구사항 메타데이터.
+     * 스펙 §4.2 — 운동 모듈은 요구사항을 판단 로직이 아닌 데이터로 제공한다.
      */
     requirements: {
       requiredViews: ['SIDE'],
@@ -489,11 +489,11 @@ Add `requirements` metadata right after `code: 'push_up'` (after line 29):
     },
 ```
 
-- [ ] **Step 4: Clean scoreRep to remove gate-owned hardFails**
+- [ ] **단계 4: scoreRep에서 게이트 소유 hardFails 제거**
 
-In the `scoreRep` method (around lines 292-307), remove the `view_mismatch` and `low_confidence` hardFail entries:
+`scoreRep` 메소드(292-307행 부근)에서 `view_mismatch`와 `low_confidence` hardFail 항목 제거:
 
-Current code (lines 292-307):
+현재 코드(lines 292-307):
 ```javascript
       const hardFails = [];
       if (view !== 'SIDE') {
@@ -513,12 +513,12 @@ Current code (lines 292-307):
       }
 ```
 
-Replace with:
+다음으로 교체:
 ```javascript
       const hardFails = [];
-      // Note: view_mismatch and low_confidence are gate-owned reasons (spec §3.2).
-      // The common quality gate in scoring-engine.js handles these BEFORE exercise
-      // evaluation runs, so they cannot reach this code path.
+      // 참고: view_mismatch와 low_confidence는 게이트 소유 reason이다 (스펙 §3.2).
+      // scoring-engine.js의 공통 품질 게이트가 운동 평가 실행 전에 이를 처리하므로,
+      // 이 코드 경로에 도달할 수 없다.
       if (!summary.flags?.bottomReached || bottomElbow == null || bottomElbow > 110) {
         hardFails.push('depth_not_reached');
       }
@@ -530,9 +530,9 @@ Replace with:
       }
 ```
 
-Also remove the score cap logic for `view_mismatch` and `low_confidence` (lines 345-359):
+또한 `view_mismatch`와 `low_confidence`에 대한 점수 제한 로직 제거(lines 345-359):
 
-Current code:
+현재 코드:
 ```javascript
       if (hardFails.includes('view_mismatch')) {
         finalScore = Math.min(finalScore, 50);
@@ -551,7 +551,7 @@ Current code:
       }
 ```
 
-Replace with:
+다음으로 교체:
 ```javascript
       if (hardFails.includes('depth_not_reached')) {
         finalScore = Math.min(finalScore, 55);
@@ -564,9 +564,9 @@ Replace with:
       }
 ```
 
-Also update `pickFeedback` (lines 769-802) to remove `low_confidence` and `view_mismatch` branches:
+또한 `pickFeedback`(769-802행)에서 `low_confidence`와 `view_mismatch` 분기 제거:
 
-Current code:
+현재 코드:
 ```javascript
     if (hardFails.includes('low_confidence') || confidence.level === 'LOW') {
       return '카메라에 전신이 잘 보이도록 위치를 다시 맞춰주세요';
@@ -576,23 +576,23 @@ Current code:
     }
 ```
 
-Remove those two `if` blocks entirely. The `pickFeedback` function should only handle exercise-specific feedback (`depth_not_reached`, `body_line_broken`, `lockout_incomplete`).
+이 두 `if` 블록을 완전히 제거. `pickFeedback` 함수는 운동별 피드백(`depth_not_reached`, `body_line_broken`, `lockout_incomplete`)만 처리해야 한다.
 
-- [ ] **Step 5: Remove normalizePushUpEvaluation export (no longer needed)**
+- [ ] **단계 5: normalizePushUpEvaluation 익스포트 제거 (더 이상 필요 없음)**
 
-Since `getFrameGate` is removed and `scoreRep` no longer emits gate-owned reasons, the `normalizePushUpEvaluation` function is dead code. Remove the function definition (lines 866-894) and its module.exports entry (lines 896-901).
+`getFrameGate`가 제거되고 `scoreRep`가 더 이상 게이트 소유 reason을 생성하지 않으므로, `normalizePushUpEvaluation` 함수는 죽은 코드이다. 함수 정의(lines 866-894)와 module.exports 항목(lines 896-901)을 제거한다.
 
-Keep the function temporarily but mark it deprecated if other code references it. After verifying no other module imports it, remove it entirely.
+다른 코드가 참조하는 경우 함수를 임시로 유지하되 deprecated로 표시. 다른 모듈이 임포트하지 않는지 확인한 후 완전히 제거.
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [ ] **단계 6: 테스트 실행하여 통과 확인**
 
-Run: `node --test test/workout/exercise-rule-separation.test.js`
-Expected: PASS (all tests including new metadata tests)
+실행: `node --test test/workout/exercise-rule-separation.test.js`
+예상: PASS (새 메타데이터 테스트 포함 모든 테스트)
 
-Run: `node --test test/workout/quality-gate.test.js`
-Expected: PASS (unchanged)
+실행: `node --test test/workout/quality-gate.test.js`
+예상: PASS (변경 없음)
 
-- [ ] **Step 7: Commit**
+- [ ] **단계 7: 커밋**
 
 ```bash
 git add public/js/workout/exercises/push-up-exercise.js test/workout/exercise-rule-separation.test.js
@@ -601,14 +601,14 @@ git commit -m "refactor: remove getFrameGate from push-up, add declarative requi
 
 ---
 
-## Task 4: Remove getFrameGateResult Call from session-controller.js
+## 작업 4: session-controller.js에서 getFrameGateResult 호출 제거
 
-**Files:**
-- Modify: `public/js/workout/session-controller.js` (lines 440-450, 824-843)
+**파일:**
+- 수정: `public/js/workout/session-controller.js` (lines 440-450, 824-843)
 
-- [ ] **Step 1: Write the failing test for single-gate enforcement**
+- [ ] **단계 1: 단일 게이트 강제에 대한 실패 테스트 작성**
 
-Add to `test/workout/authority-separation.test.js` (new file):
+`test/workout/authority-separation.test.js` (신규 파일)에 추가:
 
 ```javascript
 const test = require('node:test');
@@ -620,7 +620,7 @@ const {
 } = require('../../public/js/workout/scoring-engine.js');
 
 // ---------------------------------------------------------------------------
-// Authority contract: gate-owned reasons must only come from scoring-engine
+// 권한 계약: 게이트 소유 reason은 scoring-engine에서만 나와야 한다
 // ---------------------------------------------------------------------------
 
 test('GATE_ONLY_REASONS is exported and non-empty', () => {
@@ -629,7 +629,7 @@ test('GATE_ONLY_REASONS is exported and non-empty', () => {
 });
 
 test('evaluateQualityGate only emits gate-owned reason codes or null', () => {
-  // Test all withhold paths produce only GATE_ONLY_REASONS
+  // 모든 보류 경로가 GATE_ONLY_REASONS만 생성하는지 테스트
   const testCases = [
     { inputs: { cameraDistanceOk: false, detectionConfidence: 0.9, trackingConfidence: 0.9, frameInclusionRatio: 0.95, keyJointVisibilityAverage: 0.8, minKeyJointVisibility: 0.7, estimatedView: 'SIDE', estimatedViewConfidence: 0.8, stableFrameCount: 10, unstableFrameRatio: 0.05 }, context: { allowedViews: ['SIDE'] }, expectedReason: 'out_of_frame' },
     { inputs: { cameraDistanceOk: true, detectionConfidence: 0.3, trackingConfidence: 0.9, frameInclusionRatio: 0.95, keyJointVisibilityAverage: 0.8, minKeyJointVisibility: 0.7, estimatedView: 'SIDE', estimatedViewConfidence: 0.8, stableFrameCount: 10, unstableFrameRatio: 0.05 }, context: { allowedViews: ['SIDE'] }, expectedReason: 'low_confidence' },
@@ -670,40 +670,40 @@ test('applyRepOutcome with gate=pass delegates to exercise evaluation for state'
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **단계 2: 테스트 실행하여 실패 확인**
 
-Run: `node --test test/workout/authority-separation.test.js`
-Expected: FAIL — `GATE_ONLY_REASONS` not yet exported (will pass after Task 1), but the full authority tests need the updated scoring-engine.
+실행: `node --test test/workout/authority-separation.test.js`
+예상: FAIL — `GATE_ONLY_REASONS`가 아직 익스포트되지 않음 (작업 1 이후에 통과), 전체 권한 테스트는 업데이트된 scoring-engine이 필요함.
 
-- [ ] **Step 3: Remove getFrameGateResult function and its call site in session-controller.js**
+- [ ] **단계 3: session-controller.js에서 getFrameGateResult 함수와 그 호출 지점 제거**
 
-Remove the `getFrameGateResult` function (lines 440-450):
-
-```javascript
-  // REMOVED: getFrameGateResult — gate authority belongs exclusively to scoring-engine.js
-  // The common quality gate (evaluateQualityGate) is the sole pass/withhold decision-maker.
-  // Exercise modules must not emit gating decisions (spec §3.1, §3.2).
-```
-
-Remove the call site in `handlePoseDetected` (lines 824-843):
+`getFrameGateResult` 함수(lines 440-450) 제거:
 
 ```javascript
-    // REMOVED: exercise module frame gate — authority consolidated in scoring-engine.js
-    // The quality gate (evaluateQualityGate) above already decides pass/withhold.
-    // If gate passes, proceed directly to scoring.
+  // 제거됨: getFrameGateResult — 게이트 권한은 오로지 scoring-engine.js에 속함
+  // 공통 품질 게이트(evaluateQualityGate)가 유일한 pass/withhold 결정자이다.
+  // 운동 모듈은 게이팅 판단을 생성해서는 안 된다 (스펙 §3.1, §3.2).
 ```
 
-The flow in `handlePoseDetected` becomes:
-1. Update quality gate tracker → build gate inputs → evaluate quality gate
-2. If gate withholds → suppress scoring, show message (existing logic, unchanged)
-3. If gate passes → proceed directly to `scoringEngine.calculate(angles)` (skip the removed frame gate check)
+`handlePoseDetected`의 호출 지점(lines 824-843) 제거:
 
-- [ ] **Step 4: Run all tests to verify they pass**
+```javascript
+    // 제거됨: 운동 모듈 프레임 게이트 — 권한이 scoring-engine.js로 통합됨
+    // 위의 품질 게이트(evaluateQualityGate)가 이미 pass/withhold를 결정한다.
+    // 게이트 통과 시 → 바로 채점으로 진행.
+```
 
-Run: `node --test test/workout/`
-Expected: PASS (all test files)
+`handlePoseDetected`의 흐름은 다음과 같이 된다:
+1. 품질 게이트 트래커 업데이트 → 게이트 입력 빌드 → 품질 게이트 평가
+2. 게이트 보류 시 → 채점 억제, 메시지 표시 (기존 로직, 변경 없음)
+3. 게이트 통과 시 → `scoringEngine.calculate(angles)`로 직접 진행 (제거된 프레임 게이트 검사 건너뜀)
 
-- [ ] **Step 5: Commit**
+- [ ] **단계 4: 모든 테스트 실행하여 통과 확인**
+
+실행: `node --test test/workout/`
+예상: PASS (모든 테스트 파일)
+
+- [ ] **단계 5: 커밋**
 
 ```bash
 git add public/js/workout/session-controller.js test/workout/authority-separation.test.js
@@ -712,32 +712,32 @@ git commit -m "refactor: remove exercise frame gate call, enforce single quality
 
 ---
 
-## Task 5: Verify pose-engine.js Signal Purity
+## 작업 5: pose-engine.js 신호 순수성 검증
 
-**Files:**
-- Verify: `public/js/workout/pose-engine.js` (read-only audit)
-- Modify: `test/workout/authority-separation.test.js` (add signal-purity test)
+**파일:**
+- 검증: `public/js/workout/pose-engine.js` (읽기 전용 감사)
+- 수정: `test/workout/authority-separation.test.js` (신호 순수성 테스트 추가)
 
-- [ ] **Step 1: Write test confirming pose-engine produces only signals**
+- [ ] **단계 1: pose-engine이 신호만 생성함을 확인하는 테스트 작성**
 
-Add to `test/workout/authority-separation.test.js`:
+`test/workout/authority-separation.test.js`에 추가:
 
 ```javascript
 // ---------------------------------------------------------------------------
-// pose-engine.js signal purity (spec §3.4)
+// pose-engine.js 신호 순수성 (스펙 §3.4)
 // ---------------------------------------------------------------------------
 
 test('pose-engine exports do not include any gating functions', () => {
   const poseModule = require('../../public/js/workout/pose-engine.js');
   const exportedKeys = Object.keys(poseModule);
 
-  // pose-engine should export PoseEngine class and buildQualityGateInputs helper
-  // It must NOT export any function with "gate" or "withhold" in the name
+  // pose-engine은 PoseEngine 클래스와 buildQualityGateInputs 헬퍼를 익스포트해야 함
+  // 이름에 "gate"나 "withhold"가 포함된 함수를 익스포트해서는 안 됨
   const gateLikeKeys = exportedKeys.filter(
     (key) => /gate|withhold|suppress/i.test(key)
   );
 
-  // buildQualityGateInputs is a data builder, not a decision-maker — allowed
+  // buildQualityGateInputs는 데이터 빌더일 뿐 판단자는 아님 — 허용됨
   const decisionMakerKeys = gateLikeKeys.filter(
     (key) => key !== 'buildQualityGateInputs'
   );
@@ -753,7 +753,7 @@ test('PoseEngine.getFrameQuality returns only signal data, no decisions', () => 
   const { PoseEngine } = require('../../public/js/workout/pose-engine.js');
   const engine = new PoseEngine();
 
-  // Mock landmarks for a minimal test
+  // 최소 테스트를 위한 목업 랜드마크
   const mockLandmarks = new Array(33).fill(null).map((_, i) => ({
     x: 0.5,
     y: 0.5,
@@ -763,7 +763,7 @@ test('PoseEngine.getFrameQuality returns only signal data, no decisions', () => 
 
   const quality = engine.getFrameQuality(mockLandmarks, 'SIDE');
 
-  // Quality output must be a signal object with numeric scores, not a decision
+  // 품질 출력은 판단이 아닌 수치 점수를 가진 신호 객체여야 함
   assert.ok('score' in quality, 'quality must have score');
   assert.ok('level' in quality, 'quality must have level');
   assert.ok('factor' in quality, 'quality must have factor');
@@ -771,19 +771,19 @@ test('PoseEngine.getFrameQuality returns only signal data, no decisions', () => 
   assert.ok('inFrameRatio' in quality, 'quality must have inFrameRatio');
   assert.ok('viewStability' in quality, 'quality must have viewStability');
 
-  // Must NOT contain decision fields
+  // 판단 필드가 포함되어서는 안 됨
   assert.equal('result' in quality, false, 'quality must not have result field');
   assert.equal('withhold' in quality, false, 'quality must not have withhold field');
   assert.equal('pass' in quality, false, 'quality must not have pass field');
 });
 ```
 
-- [ ] **Step 2: Run test to verify it passes**
+- [ ] **단계 2: 테스트 실행하여 통과 확인**
 
-Run: `node --test test/workout/authority-separation.test.js`
-Expected: PASS (pose-engine is already signal-only per current code)
+실행: `node --test test/workout/authority-separation.test.js`
+예상: PASS (pose-engine은 현재 코드 기준 이미 신호 전용임)
 
-- [ ] **Step 3: Commit**
+- [ ] **단계 3: 커밋**
 
 ```bash
 git add test/workout/authority-separation.test.js
@@ -792,33 +792,33 @@ git commit -m "test: add authority separation and signal purity tests"
 
 ---
 
-## Task 6: Add Cross-Module Reason Code Integrity Test
+## 작업 6: 크로스 모듈 Reason Code 무결성 테스트 추가
 
-**Files:**
-- Modify: `test/workout/authority-separation.test.js` (add reason-code integrity tests)
+**파일:**
+- 수정: `test/workout/authority-separation.test.js` (reason-code 무결성 테스트 추가)
 
-- [ ] **Step 1: Write test that no exercise module emits gate-owned reasons**
+- [ ] **단계 1: 운동 모듈이 게이트 소유 reason을 생성하지 않음을 확인하는 테스트 작성**
 
-Add to `test/workout/authority-separation.test.js`:
+`test/workout/authority-separation.test.js`에 추가:
 
 ```javascript
 // ---------------------------------------------------------------------------
-// Reason-code integrity: exercise modules must not emit gate-owned codes
+// Reason-code 무결성: 운동 모듈은 게이트 소유 코드를 생성해서는 안 된다
 // ---------------------------------------------------------------------------
 
 test('push-up scoreRep hardFails contain only exercise-specific reason codes', () => {
-  // The push-up exercise module's scoreRep should only produce:
+  // 푸쉬업 운동 모듈의 scoreRep은 다음만 생성해야 함:
   // depth_not_reached, lockout_incomplete, body_line_broken
-  // It must NOT produce any GATE_ONLY_REASONS
+  // GATE_ONLY_REASONS의 어떤 것도 생성해서는 안 됨
   const { GATE_ONLY_REASONS } = require('../../public/js/workout/scoring-engine.js');
 
-  // Verify the exercise module does not have getFrameGate
+  // 운동 모듈에 getFrameGate가 없는지 확인
   const pushUpModule = require('../../public/js/workout/exercises/push-up-exercise.js');
-  // If normalizePushUpEvaluation was removed, this import should not exist
-  // If it still exists temporarily, verify it's a no-op
+  // normalizePushUpEvaluation이 제거되었다면 이 임포트는 존재하지 않아야 함
+  // 일시적으로 존재한다면 no-op인지 확인
   if (pushUpModule.normalizePushUpEvaluation) {
-    // If normalizePushUpEvaluation still exists, it should be a no-op
-    // because scoreRep no longer emits gate-owned reasons
+    // normalizePushUpEvaluation이 여전히 존재한다면, scoreRep이 더 이상
+    // 게이트 소유 reason을 생성하지 않으므로 no-op이어야 함
     const result = pushUpModule.normalizePushUpEvaluation({
       hardFailReason: 'depth_not_reached',
       softFailReasons: ['body_line_broken'],
@@ -831,7 +831,7 @@ test('push-up scoreRep hardFails contain only exercise-specific reason codes', (
 test('all gate-owned reason codes are documented in GATE_ONLY_REASONS', () => {
   const { GATE_ONLY_REASONS } = require('../../public/js/workout/scoring-engine.js');
 
-  // Spec §Appendix: these are the canonical gate-owned codes
+  // 스펙 §부록: 이들은 정식 게이트 소유 코드이다
   const specGateReasons = [
     'out_of_frame',
     'tracked_joints_low',
@@ -848,7 +848,7 @@ test('all gate-owned reason codes are documented in GATE_ONLY_REASONS', () => {
     );
   }
 
-  // No extra codes beyond spec
+  // 스펙 외 추가 코드 없음
   assert.equal(
     GATE_ONLY_REASONS.length,
     specGateReasons.length,
@@ -857,12 +857,12 @@ test('all gate-owned reason codes are documented in GATE_ONLY_REASONS', () => {
 });
 ```
 
-- [ ] **Step 2: Run all tests to verify they pass**
+- [ ] **단계 2: 모든 테스트 실행하여 통과 확인**
 
-Run: `node --test test/workout/`
-Expected: PASS (all test files, all tests)
+실행: `node --test test/workout/`
+예상: PASS (모든 테스트 파일, 모든 테스트)
 
-- [ ] **Step 3: Commit**
+- [ ] **단계 3: 커밋**
 
 ```bash
 git add test/workout/authority-separation.test.js
@@ -871,34 +871,34 @@ git commit -m "test: add reason-code integrity tests for cross-module authority"
 
 ---
 
-## Task 7: Final Verification — Run Full Test Suite
+## 작업 7: 최종 검증 — 전체 테스트 스위트 실행
 
-**Files:**
-- All test files under `test/workout/`
+**파일:**
+- `test/workout/` 하위 모든 테스트 파일
 
-- [ ] **Step 1: Run the full test suite**
+- [ ] **단계 1: 전체 테스트 스위트 실행**
 
-Run: `node --test test/workout/`
-Expected: All tests PASS across all files:
-- `test/workout/quality-gate.test.js` — gate reason codes, thresholds
-- `test/workout/scoring-state-machine.test.js` — applyRepOutcome state transitions
-- `test/workout/session-controller-gate-ui.test.js` — UX message mapping, tracker logic
-- `test/workout/exercise-rule-separation.test.js` — squat priorities, push-up normalization, metadata
-- `test/workout/authority-separation.test.js` — cross-module authority, signal purity, reason integrity
+실행: `node --test test/workout/`
+예상: 모든 테스트 파일에서 모든 테스트 PASS:
+- `test/workout/quality-gate.test.js` — 게이트 reason code, 임계값
+- `test/workout/scoring-state-machine.test.js` — applyRepOutcome 상태 전이
+- `test/workout/session-controller-gate-ui.test.js` — UX 메시지 매핑, 트래커 로직
+- `test/workout/exercise-rule-separation.test.js` — 스쿼트 우선순위, 푸쉬업 정규화, 메타데이터
+- `test/workout/authority-separation.test.js` — 크로스 모듈 권한, 신호 순수성, reason 무결성
 
-- [ ] **Step 2: Verify no source files were modified outside allowed_files**
+- [ ] **단계 2: 수정된 파일이 허용 목록 외에 없는지 확인**
 
-Run: `git diff --name-only`
-Expected: Only files in the allowed list are modified:
+실행: `git diff --name-only`
+예상: 허용 목록의 파일만 수정됨:
 - `public/js/workout/scoring-engine.js`
 - `public/js/workout/exercises/push-up-exercise.js`
 - `public/js/workout/session-controller.js`
 - `test/workout/quality-gate.test.js`
 - `test/workout/session-controller-gate-ui.test.js`
 - `test/workout/exercise-rule-separation.test.js`
-- `test/workout/authority-separation.test.js` (new)
+- `test/workout/authority-separation.test.js` (신규)
 
-- [ ] **Step 3: Final commit if all tests pass**
+- [ ] **단계 3: 모든 테스트 통과 시 최종 커밋**
 
 ```bash
 git add -A
@@ -907,16 +907,16 @@ git commit -m "feat: complete quality gate authority consolidation per design sp
 
 ---
 
-## Summary of Spec Coverage
+## 스펙 커버리지 요약
 
-| Spec Section | Task(s) | Status |
+| 스펙 섹션 | 작업 | 상태 |
 |---|---|---|
-| §3.1 Sole Authority of Common Gate | Task 1, Task 4 | `evaluateQualityGate` is the only pass/withhold decision-maker |
-| §3.2 Prohibited Exercise Behaviors | Task 3, Task 6 | `getFrameGate` removed; `scoreRep` no longer emits gate-owned reasons |
-| §3.3 Permitted Exercise Behaviors | Task 3 | `requirements` metadata added; motion semantics preserved |
-| §3.4 pose-engine Signal Producer | Task 5 | Verified signal-only; test added |
-| §3.5 session-controller Orchestrator | Task 4 | Removed `getFrameGateResult` call; consumes only resolved gate state |
-| §4 Data Contracts | Task 1, Task 3 | Standardized reason codes; declarative metadata contract |
-| §5 Current Code Implications | All tasks | All four modules audited and updated |
-| §7 Success Criteria | Task 7 | All six criteria met via tests |
-| Appendix: Reason-Code Ownership | Task 1, Task 6 | `GATE_ONLY_REASONS` constant enforces the matrix |
+| §3.1 공통 게이트의 유일한 권한 | 작업 1, 작업 4 | `evaluateQualityGate`가 유일한 pass/withhold 결정자 |
+| §3.2 금지된 운동 동작 | 작업 3, 작업 6 | `getFrameGate` 제거; `scoreRep`이 더 이상 게이트 소유 reason 생성 안 함 |
+| §3.3 허용된 운동 동작 | 작업 3 | `requirements` 메타데이터 추가; 동작 의미 보존 |
+| §3.4 pose-engine 신호 생성기 | 작업 5 | 신호 전용 확인; 테스트 추가 |
+| §3.5 session-controller 오케스트레이터 | 작업 4 | `getFrameGateResult` 호출 제거; 결정된 게이트 상태만 소비 |
+| §4 데이터 계약 | 작업 1, 작업 3 | Reason code 표준화; 선언적 메타데이터 계약 |
+| §5 현재 코드 영향 | 모든 작업 | 네 모듈 모두 감사 및 업데이트 완료 |
+| §7 성공 기준 | 작업 7 | 6개 기준 모두 테스트로 충족 |
+| 부록: Reason-Code 소유권 | 작업 1, 작업 6 | `GATE_ONLY_REASONS` 상수가 매트릭스를 강제 |
