@@ -293,6 +293,136 @@
   line-height: 1.5;
 }
 
+/* 운동 시작 온보딩 modal */
+.workout-onboarding-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.workout-onboarding-modal[hidden] {
+  display: none !important;
+}
+
+.workout-onboarding-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.62);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.workout-onboarding-card {
+  position: relative;
+  z-index: 1;
+  width: min(560px, 100%);
+  max-height: min(760px, calc(100vh - 40px));
+  overflow: auto;
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+  border-radius: 24px;
+  border: 1px solid var(--workout-border);
+  background: var(--workout-card-bg);
+  color: var(--workout-text);
+  box-shadow: var(--workout-shadow);
+}
+
+.workout-onboarding-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workout-onboarding-header h3 {
+  margin: 4px 0 0;
+  font-size: 22px;
+}
+
+.workout-onboarding-eyebrow,
+.workout-onboarding-progress {
+  color: var(--workout-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.workout-onboarding-close {
+  flex-shrink: 0;
+}
+
+.workout-onboarding-image-shell {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  border: 1px dashed var(--workout-border);
+  background: var(--workout-panel-bg);
+}
+
+.workout-onboarding-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.workout-onboarding-image-placeholder {
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  padding: 20px;
+  text-align: center;
+  color: var(--workout-muted);
+}
+
+.workout-onboarding-image-placeholder strong {
+  color: var(--workout-text);
+}
+
+.workout-onboarding-bullets {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 8px;
+  line-height: 1.5;
+}
+
+.workout-onboarding-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workout-onboarding-arrow,
+.workout-onboarding-next {
+  min-width: 56px;
+}
+
+.workout-onboarding-next {
+  padding-inline: 18px;
+}
+
+@media (max-width: 640px) {
+  .workout-onboarding-modal {
+    padding: 12px;
+  }
+
+  .workout-onboarding-card {
+    max-height: calc(100vh - 24px);
+    padding: 18px;
+    border-radius: 20px;
+  }
+
+  .workout-onboarding-header h3 {
+    font-size: 20px;
+  }
+}
+
 /* 세션: 포즈 캔버스 오버레이 (비디오 위) */
 #poseCanvas {
   position: absolute;
