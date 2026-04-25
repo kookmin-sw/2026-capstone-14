@@ -140,3 +140,42 @@ test('export includes withhold counts and rep-level scoring states', () => {
   assert.equal(exported.withhold_reason_counts.view_mismatch, 1);
   assert.equal(exported.rep_results[0].rep_result, 'soft_fail');
 });
+
+test('addEvent preserves a payload while keeping legacy type-only calls working', () => {
+  const SessionBuffer = loadSessionBuffer();
+  const buffer = new SessionBuffer('session-voice');
+
+  buffer.addEvent('SESSION_START');
+  buffer.addEvent('LOW_SCORE_HINT', {
+    message: '무릎을 바깥쪽으로 밀어주세요',
+    metric_key: 'knee_valgus',
+    delivery: { visual: true, voice: true },
+  });
+
+  assert.equal(buffer.events.length, 2);
+  assert.equal(buffer.events[0].type, 'SESSION_START');
+  assert.equal(typeof buffer.events[0].timestamp, 'number');
+  assert.equal(buffer.events[1].payload.message, '무릎을 바깥쪽으로 밀어주세요');
+  assert.equal(buffer.events[1].payload.metric_key, 'knee_valgus');
+  assert.equal(buffer.events[1].payload.delivery.visual, true);
+  assert.equal(buffer.events[1].payload.delivery.voice, true);
+});
+
+test('recordEvent adds a relative timestamp when feedback event has none', () => {
+  const SessionBuffer = loadSessionBuffer();
+  const buffer = new SessionBuffer('session-voice');
+
+  buffer.recordEvent({
+    type: 'REP_COMPLETE_FEEDBACK',
+    message: '3회 좋아요',
+    exercise_code: 'squat',
+    delivery: { visual: true, voice: true },
+  });
+
+  const exported = buffer.export();
+  assert.equal(exported.events[0].type, 'REP_COMPLETE_FEEDBACK');
+  assert.equal(exported.events[0].message, '3회 좋아요');
+  assert.equal(typeof exported.events[0].timestamp, 'number');
+  assert.equal(exported.events[0].delivery.visual, true);
+  assert.equal(exported.events[0].delivery.voice, true);
+});

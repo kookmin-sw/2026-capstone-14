@@ -209,19 +209,29 @@ class SessionBuffer {
   /**
    * 이벤트 기록
    */
-  addEvent(type) {
-    this.events.push({
+  addEvent(type, payload = null) {
+    const event = {
       type,
       timestamp: Date.now() - this.startTime
-    });
+    };
+
+    if (payload && typeof payload === 'object') {
+      event.payload = { ...payload };
+    }
+
+    this.events.push(event);
   }
 
   /**
-   * 구조화된 이벤트 기록 (withhold, gate 판정 등)
+   * 구조화된 이벤트 기록 (feedback, withhold, gate 판정 등)
    * 기존 addEvent(type)는 하위 호환 유지
    */
   recordEvent(event) {
-    this.events.push({ ...event });
+    if (!event || typeof event !== 'object') return;
+    this.events.push({
+      timestamp: Date.now() - this.startTime,
+      ...event
+    });
   }
 
   /**
